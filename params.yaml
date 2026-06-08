@@ -1,0 +1,11 @@
+proteins_screened:
+reference_structures:
+reference_proteins:
+
+max_total_res: 2500
+
+af3_weights:
+
+work_dir:
+alphafast_container:
+alphafast_db_dir:
