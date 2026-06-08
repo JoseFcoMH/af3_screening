@@ -28,8 +28,8 @@ rule make_baits_from_proteinlist:
   input:
     refprots = config.get("reference_proteins")
   output:
-    proteinlist_chains = expand(f"{WORK_DIR}/{{bait}}__{{prey}}/accesions.txt", bait=BAITS, prey=PREYS),
-    proteinlist_fasta = expand(f"{WORK_DIR}/{{bait}}__{{prey}}/baits.fasta", bait=BAITS, prey=PREYS)
+    proteinlist_chains = f"{WORK_DIR}/{{bait}}__{{prey}}/accesions.txt",
+    proteinlist_fasta = f"{WORK_DIR}/{{bait}}__{{prey}}/baits.fasta"
   run:
     copy(input.refprots, output.proteinlist_chains)
     accesions = Path(input.refprots).read_text().strip().splitlines()
@@ -41,8 +41,8 @@ rule make_baits_from_structure:
   input:
     refstruct = config.get("reference_structures")
   output:
-    structure_chains = expand(f"{WORK_DIR}/{{bait}}__{{prey}}/accesions.txt", bait=BAITS, prey=PREYS),
-    structure_fasta = expand(f"{WORK_DIR}/{{bait}}__{{prey}}/baits.fasta", bait=BAITS, prey=PREYS)
+    structure_chains = f"{WORK_DIR}/{{bait}}__{{prey}}/accesions.txt",
+    structure_fasta = f"{WORK_DIR}/{{bait}}__{{prey}}/baits.fasta"
   conda:
     envs["structural"]
   run:
