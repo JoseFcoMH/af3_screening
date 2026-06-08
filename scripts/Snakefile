@@ -1,0 +1,52 @@
+from snakemake.logging import logger
+from pathlib import Path
+import requests
+from shutil import copy
+
+
+def get_targets():
+  if config.get("reference_proteins") is not None:
+    return Path(config.get("reference_proteins")).read_text().strip().splitlines()
+  elif config.get("reference_structures") is not None:
+    return config.get("reference_structures").strip().split(",")
+  else:
+    raise ValueError
+
+predictions_db = config.get("predictions_db")
+
+BAITS = get_targets()
+PREYS = Path(config.get("proteins_screened")).read_text().strip().splitlines()
+
+
+rule all:
+  input:
+    expand(f"{WORK_DIR}/{{bait}}__{{prey}}/{{bait}}.cxs", bait=BAITS, prey=PREYS) if config.get("reference_structures") is not None else [],
+    expand(f"{WORK_DIR}/{{bait}}__{{prey}}/{{bait}}.defattr", bait=BAITS, prey=PREYS) if config.get("reference_structures") is not None else [],
+
+
+rule make_baits_from_proteinlist:
+  input:
+    refprots = config.get("reference_proteins")
+  output:
+    proteinlist_chains = expand(f"{WORK_DIR}/{{bait}}__{{prey}}/accesions.txt", bait=BAITS, prey=PREYS),
+    proteinlist_fasta = expand(f"{WORK_DIR}/{{bait}}__{{prey}}/baits.fasta", bait=BAITS, prey=PREYS)
+  run:
+    copy(input.refprots, output.proteinlist_chains)
+    accesions = Path(input.refprots).read_text().strip().splitlines()
+    with open(output.proteinlist_fasta, "w") as f:
+      f.write(fetch_uniprot_fasta(accessions))
+
+
+rule make_baits_from_structure:
+  input:
+    refstruct = config.get("reference_structures")
+  output:
+    structure_chains = expand(f"{WORK_DIR}/{{bait}}__{{prey}}/accesions.txt", bait=BAITS, prey=PREYS),
+    structure_fasta = expand(f"{WORK_DIR}/{{bait}}__{{prey}}/baits.fasta", bait=BAITS, prey=PREYS)
+  conda:
+    envs["structural"]
+  run:
+    seqs = make_baits_from_structure(input.refstruct)
+    Path(output.structure_chains).write_text("\n".join(list(seqs.keys())))
+    Path(output.structure_fasta).write_text(dict_to_fasta(seqs))
+
