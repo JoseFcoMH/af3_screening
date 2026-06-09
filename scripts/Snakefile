@@ -3,50 +3,161 @@ from pathlib import Path
 import requests
 from shutil import copy
 
+from load_utils import (
+    dict_to_fasta,
+    fasta_to_dict,
+    fetch_uniprot_fasta,
+    get_seqs_from_struc,
+    dimer_template,
+)
 
-def get_targets():
-  if config.get("reference_proteins") is not None:
-    return Path(config.get("reference_proteins")).read_text().strip().splitlines()
-  elif config.get("reference_structures") is not None:
-    return config.get("reference_structures").strip().split(",")
-  else:
-    raise ValueError
 
-predictions_db = config.get("predictions_db")
+STRUCTURE_BAITS = []
+PROTEINLIST_BAITS = []
 
-BAITS = get_targets()
+if prots := config.get("reference_proteins") is not None:
+    PROTEINLIST_BAITS = Path(prots).read_text().strip().splitlines()
+if structs := config.get("reference_structures") is not None:
+    STRUCTURE_BAITS = Path(structs).read_text().strip().splitlines()
+
+BAITS = STRUCTURE_BAITS + PROTEINLIST_BAITS
+BAITS_DICT = {Path(b).stem: b for b in BAITS}
+BAITS_NAMED = list(BAITS_DICT.keys())
+
 PREYS = Path(config.get("proteins_screened")).read_text().strip().splitlines()
 
 
 rule all:
-  input:
-    expand(f"{WORK_DIR}/{{bait}}__{{prey}}/{{bait}}.cxs", bait=BAITS, prey=PREYS) if config.get("reference_structures") is not None else [],
-    expand(f"{WORK_DIR}/{{bait}}__{{prey}}/{{bait}}.defattr", bait=BAITS, prey=PREYS) if config.get("reference_structures") is not None else [],
+    input:
+        expand(
+            f"{WORK_DIR}/{{bait}}__{{prey}}/alphafast_output",
+            bait=BAITS_NAMED,
+            prey=PREYS,
+        ),
+        expand(
+            f"{WORK_DIR}/{{bait}}__{{prey}}/processed_output/{{bait}}.defattr",
+            bait=BAITS_NAMED,
+            prey=PREYS,
+        )
+        if structs is not None
+        else [],
 
 
 rule make_baits_from_proteinlist:
-  input:
-    refprots = config.get("reference_proteins")
-  output:
-    proteinlist_chains = f"{WORK_DIR}/{{bait}}__{{prey}}/accesions.txt",
-    proteinlist_fasta = f"{WORK_DIR}/{{bait}}__{{prey}}/baits.fasta"
-  run:
-    copy(input.refprots, output.proteinlist_chains)
-    accesions = Path(input.refprots).read_text().strip().splitlines()
-    with open(output.proteinlist_fasta, "w") as f:
-      f.write(fetch_uniprot_fasta(accessions))
+    input:
+        source=lambda wc: BAITS_DICT[wc.bait],
+    output:
+        accessions=f"{WORK_DIR}/{{bait}}__{{prey}}/baits_accessions.txt",
+        fasta=f"{WORK_DIR}/{{bait}}__{{prey}}/baits.fasta",
+    wildcard_constraints:
+        bait="|".join(PROTEINLIST_BAITS),
+    run:
+        copy(input.source, output.accessions)
+        accessions = Path(input.source).read_text().splitlines()
+        accessions = [x.strip() for x in accessions if x.strip()]
+        Path(output.fasta).write_text(fetch_uniprot_fasta(accessions))
 
 
 rule make_baits_from_structure:
-  input:
-    refstruct = config.get("reference_structures")
-  output:
-    structure_chains = f"{WORK_DIR}/{{bait}}__{{prey}}/accesions.txt",
-    structure_fasta = f"{WORK_DIR}/{{bait}}__{{prey}}/baits.fasta"
-  conda:
-    envs["structural"]
-  run:
-    seqs = make_baits_from_structure(input.refstruct)
-    Path(output.structure_chains).write_text("\n".join(list(seqs.keys())))
-    Path(output.structure_fasta).write_text(dict_to_fasta(seqs))
+    input:
+        source=lambda wc: BAITS_DICT[wc.bait],
+    output:
+        accessions=f"{WORK_DIR}/{{bait}}__{{prey}}/baits_accessions.txt",
+        fasta=f"{WORK_DIR}/{{bait}}__{{prey}}/baits.fasta",
+    wildcard_constraints:
+        bait="|".join(STRUCTURE_BAITS),
+    conda:
+        envs["structural"]
+    run:
+        seqs = make_baits_from_structure(input.source)
+        Path(output.accessions).write_text("\n".join(seqs.keys()) + "\n")
+        Path(output.fasta).write_text(dict_to_fasta(seqs))
 
+
+rule make_preys:
+    output:
+        preys_fasta=f"{WORK_DIR}/{{bait}}__{{prey}}/prey.fasta",
+    run:
+        with open(output.preys_fasta, "w") as f:
+            f.write(fetch_uniprot_fasta([wildcards.prey]))
+
+
+rule make_input_json:
+    input:
+        baits_fasta=f"{WORK_DIR}/{{bait}}__{{prey}}/baits.fasta",
+        preys_fasta=f"{WORK_DIR}/{{bait}}__{{prey}}/prey.fasta",
+    output:
+        json_dir=directory(f"{WORK_DIR}/{{bait}}__{{prey}}/data_pipeline_input"),
+    params:
+        max_len=config.get("total_max_res", 2549),
+    run:
+        preys = fasta_to_dict(input.preys_fasta)
+        baits = fasta_to_dict(input.baits_fasta)
+
+        for prey_name, prey_seq in preys.items():
+            for bait_name, bait_seq in baits.items():
+                if (total_len := len(prey_seq) + len(bait_seq)) > params.max_len:
+                    logger.warning(
+                        f"Skipped pair {prey_name}__{bait_name} (too long - {total_len} residues total, max is {params.max_len})"
+                    )
+                    continue
+
+                dimer = dimer_template.copy()
+
+                name = f"{prey_name}__{bait_name}"
+                dimer["name"] = name
+                dimer["sequences"][0]["protein"]["sequence"] = prey_seq
+                dimer["sequences"][1]["protein"]["sequence"] = bait_seq
+
+                with open(f"{output.json_dir}/{name}.json", "w") as f:
+                    json.dump(dimer, f, indent=4)
+
+
+rule run_alphafast:
+    input:
+        json_dir=directory(f"{WORK_DIR}/{{bait}}__{{prey}}/data_pipeline_input"),
+    output:
+        predictions_dir=directory(f"{WORK_DIR}/{{bait}}__{{prey}}/alphafast_output"),
+    resources:
+        mem_mb=256_000,
+        cpus_per_task=8,
+        runtime=1440 * 7,
+        uses_gpu=1,
+        gres="gpu:1",
+        slurm_partition="gpuqueue",
+    shell:
+        """
+    export XLA_FLAGS="--xla_disable_hlo_passes=custom-kernel-fusion-rewriter"
+
+    module purge
+    module load singularity/3.8.0 apptainer
+
+    /home/vzl634/datadir/alphafast/scripts/run_alphafast.sh \
+      --input_dir {input.json_dir} \
+      --output_dir {output.predictions_dir} \
+      --container /home/vzl634/datadir/alphafast.sif \
+      --db_dir /home/vzl634/datadir/mmseqs2_dbs \
+      --weights_dir /home/vzl634/datadir/af3_latest/alphafold3 \
+      --temp_dir /scratch/$USER/alphafast_tmp
+    """
+
+
+rule map_prediction_to_structure:
+    input:
+        predictions_dir=directory(f"{WORK_DIR}/{{bait}}__{{prey}}/alphafast_output"),
+        cif_structure=lambda wc: BAITS_DICT[wc.bait],
+    output:
+        attr_file=f"{WORK_DIR}/{{bait}}__{{prey}}/processed_output/{{bait}}.defattr",
+    resources:
+        mem_mb=16000,
+        cpus_per_task=8,
+        runtime=1440,
+    conda:
+        envs["structural"]
+    shell:
+        """
+    python AF3screenToStructure.py \
+      --af3_dir {input.predictions_dir} \
+      --out_file  {output.attr_file} \
+      --cif_file {input.cif_structure}  \
+    """
