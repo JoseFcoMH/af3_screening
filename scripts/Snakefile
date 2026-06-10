@@ -1,13 +1,13 @@
 from snakemake.logging import logger
 from pathlib import Path
 import requests
+import json
 from shutil import copy
 
 from load_utils import (
-    dict_to_fasta,
     fasta_to_dict,
     fetch_uniprot_fasta,
-    get_seqs_from_struc,
+    get_uniprot_ids_from_struc,
     dimer_template,
 )
 
@@ -15,9 +15,9 @@ from load_utils import (
 STRUCTURE_BAITS = []
 PROTEINLIST_BAITS = []
 
-if prots := config.get("reference_proteins") is not None:
+if prots := config.get("reference_proteins"):
     PROTEINLIST_BAITS = Path(prots).read_text().strip().splitlines()
-if structs := config.get("reference_structures") is not None:
+if structs := config.get("reference_structures"):
     STRUCTURE_BAITS = Path(structs).read_text().strip().splitlines()
 
 BAITS = STRUCTURE_BAITS + PROTEINLIST_BAITS
@@ -26,16 +26,24 @@ BAITS_NAMED = list(BAITS_DICT.keys())
 
 PREYS = Path(config.get("proteins_screened")).read_text().strip().splitlines()
 
+envs = config.get("envs")
+WORK_DIR = config.get("work_dir")
+
+PAIR_DIR = f"{WORK_DIR}/{{bait}}__{{prey}}"
+
+logger.info(f"Got PREYS: {PREYS}")
+logger.info(f"Got BAITS: {BAITS_NAMED}")
+
 
 rule all:
     input:
         expand(
-            f"{WORK_DIR}/{{bait}}__{{prey}}/alphafast_output",
+            f"{PAIR_DIR}/alphafast_output",
             bait=BAITS_NAMED,
             prey=PREYS,
         ),
         expand(
-            f"{WORK_DIR}/{{bait}}__{{prey}}/processed_output/{{bait}}.defattr",
+            f"{PAIR_DIR}/processed_output/{{bait}}.defattr",
             bait=BAITS_NAMED,
             prey=PREYS,
         )
@@ -43,40 +51,43 @@ rule all:
         else [],
 
 
-rule make_baits_from_proteinlist:
-    input:
-        source=lambda wc: BAITS_DICT[wc.bait],
-    output:
-        accessions=f"{WORK_DIR}/{{bait}}__{{prey}}/baits_accessions.txt",
-        fasta=f"{WORK_DIR}/{{bait}}__{{prey}}/baits.fasta",
-    wildcard_constraints:
-        bait="|".join(PROTEINLIST_BAITS),
-    run:
-        copy(input.source, output.accessions)
-        accessions = Path(input.source).read_text().splitlines()
-        accessions = [x.strip() for x in accessions if x.strip()]
-        Path(output.fasta).write_text(fetch_uniprot_fasta(accessions))
+if PROTEINLIST_BAITS:
+
+    rule make_baits_from_proteinlist:
+        input:
+            source=lambda wc: BAITS_DICT[wc.bait],
+        output:
+            accessions=f"{PAIR_DIR}/baits_accessions.txt",
+            fasta=f"{PAIR_DIR}/baits.fasta",
+        wildcard_constraints:
+            bait="|".join(PROTEINLIST_BAITS),
+        run:
+            copy(input.source, output.accessions)
+            accessions = Path(input.source).read_text().splitlines()
+            accessions = [x.strip() for x in accessions if x.strip()]
+            Path(output.fasta).write_text(fetch_uniprot_fasta(accessions))
 
 
-rule make_baits_from_structure:
-    input:
-        source=lambda wc: BAITS_DICT[wc.bait],
-    output:
-        accessions=f"{WORK_DIR}/{{bait}}__{{prey}}/baits_accessions.txt",
-        fasta=f"{WORK_DIR}/{{bait}}__{{prey}}/baits.fasta",
-    wildcard_constraints:
-        bait="|".join(STRUCTURE_BAITS),
-    conda:
-        envs["structural"]
-    run:
-        seqs = make_baits_from_structure(input.source)
-        Path(output.accessions).write_text("\n".join(seqs.keys()) + "\n")
-        Path(output.fasta).write_text(dict_to_fasta(seqs))
+if STRUCTURE_BAITS:
+
+    rule make_baits_from_structure:
+        input:
+            source=lambda wc: BAITS_DICT[wc.bait],
+        output:
+            accessions=f"{PAIR_DIR}/baits_accessions.txt",
+            fasta=f"{PAIR_DIR}/baits.fasta",
+        conda:
+            envs["structural"]
+        run:
+            uni_ids = get_uniprot_ids_from_struc(input.source)
+            fasta = fetch_uniprot_fasta(uni_ids)
+            Path(output.accessions).write_text("\n".join(uni_ids) + "\n")
+            Path(output.fasta).write_text(fasta)
 
 
 rule make_preys:
     output:
-        preys_fasta=f"{WORK_DIR}/{{bait}}__{{prey}}/prey.fasta",
+        preys_fasta=f"{PAIR_DIR}/prey.fasta",
     run:
         with open(output.preys_fasta, "w") as f:
             f.write(fetch_uniprot_fasta([wildcards.prey]))
@@ -84,40 +95,52 @@ rule make_preys:
 
 rule make_input_json:
     input:
-        baits_fasta=f"{WORK_DIR}/{{bait}}__{{prey}}/baits.fasta",
-        preys_fasta=f"{WORK_DIR}/{{bait}}__{{prey}}/prey.fasta",
+        baits_fasta=f"{PAIR_DIR}/baits.fasta",
+        preys_fasta=f"{PAIR_DIR}/prey.fasta",
     output:
-        json_dir=directory(f"{WORK_DIR}/{{bait}}__{{prey}}/data_pipeline_input"),
+        json_dir=directory(f"{PAIR_DIR}/data_pipeline_input"),
     params:
         max_len=config.get("total_max_res", 2549),
     run:
         preys = fasta_to_dict(input.preys_fasta)
         baits = fasta_to_dict(input.baits_fasta)
 
+        Path(output.json_dir).mkdir(parents=True, exist_ok=True)
+
         for prey_name, prey_seq in preys.items():
             for bait_name, bait_seq in baits.items():
+
+                name = f"{prey_name}__{bait_name}"
+
                 if (total_len := len(prey_seq) + len(bait_seq)) > params.max_len:
                     logger.warning(
-                        f"Skipped pair {prey_name}__{bait_name} (too long - {total_len} residues total, max is {params.max_len})"
+                        f"Skipped pair {name} (too long - {total_len} residues total, max is {params.max_len})"
+                    )
+                    continue
+                if (
+                    Path(output.json_dir).parent
+                    / f"alphafast_output/{name}/{name}_model.cif"
+                ).exists():
+                    logger.info(
+                        f"Skipped pair {name} (output structure already exists)"
                     )
                     continue
 
                 dimer = dimer_template.copy()
 
-                name = f"{prey_name}__{bait_name}"
                 dimer["name"] = name
                 dimer["sequences"][0]["protein"]["sequence"] = prey_seq
                 dimer["sequences"][1]["protein"]["sequence"] = bait_seq
 
-                with open(f"{output.json_dir}/{name}.json", "w") as f:
-                    json.dump(dimer, f, indent=4)
+                path = Path(output.json_dir) / f"{name}.json"
+                path.write_text(json.dumps(dimer, indent=4))
 
 
 rule run_alphafast:
     input:
-        json_dir=directory(f"{WORK_DIR}/{{bait}}__{{prey}}/data_pipeline_input"),
+        json_dir=f"{PAIR_DIR}/data_pipeline_input",
     output:
-        predictions_dir=directory(f"{WORK_DIR}/{{bait}}__{{prey}}/alphafast_output"),
+        predictions_dir=directory(f"{PAIR_DIR}/alphafast_output"),
     resources:
         mem_mb=256_000,
         cpus_per_task=8,
@@ -127,7 +150,8 @@ rule run_alphafast:
         slurm_partition="gpuqueue",
     shell:
         """
-    export XLA_FLAGS="--xla_disable_hlo_passes=custom-kernel-fusion-rewriter"
+    export SINGULARITYENV_XLA_FLAGS="--xla_disable_hlo_passes=custom-kernel-fusion-rewriter"
+    export APPTAINERENV_XLA_FLAGS="--xla_disable_hlo_passes=custom-kernel-fusion-rewriter"
 
     module purge
     module load singularity/3.8.0 apptainer
@@ -144,10 +168,10 @@ rule run_alphafast:
 
 rule map_prediction_to_structure:
     input:
-        predictions_dir=directory(f"{WORK_DIR}/{{bait}}__{{prey}}/alphafast_output"),
+        predictions_dir=f"{PAIR_DIR}/alphafast_output",
         cif_structure=lambda wc: BAITS_DICT[wc.bait],
     output:
-        attr_file=f"{WORK_DIR}/{{bait}}__{{prey}}/processed_output/{{bait}}.defattr",
+        attr_file=f"{PAIR_DIR}/processed_output/{{bait}}.defattr",
     resources:
         mem_mb=16000,
         cpus_per_task=8,
