@@ -11,6 +11,8 @@ import argparse
 from pathlib import Path
 import logging
 
+logger = logging.getLogger(__name__)
+
 
 def extract_sequences_from_cif(cif_file):
     cif_dict = MMCIF2Dict(str(cif_file))
@@ -107,7 +109,9 @@ class af3_pair:
         return self
 
     def calc_iCP(self):
-        with open(self.pred_dir / f"{self.pred_dir.name}_confidences.json", "r") as f:
+        with open(
+            Path(self.pred_dir) / f"{Path(self.pred_dir).stem}_confidences.json", "r"
+        ) as f:
             self.confidences = json.load(f)
             chain_len = {
                 chain: self.confidences["token_chain_ids"].count(chain)
@@ -175,7 +179,7 @@ class af3_pair:
         if self.iCP is None:
             self.calc_iCP()
         if self.best_seq is None:
-            logging.info(f"No mappable attribute for {self.name}")
+            logger.info(f"No mappable attribute for {self.name}")
             return self
 
         score_new = np.zeros(len(self.best_seq.seq))
@@ -220,7 +224,7 @@ def main():
         or 1
     )
 
-    logging.info(f"Using {n_cpus} CPUs.")
+    logger.info(f"Using {n_cpus} CPUs.")
 
     parser = argparse.ArgumentParser(
         prog="Process AF3 inference.",
@@ -255,7 +259,7 @@ def main():
     results = list(baseDir.glob("*"))
     results.sort()
 
-    logging.info(
+    logger.info(
         f"Found {len(results)} predictions at {baseDir}. Loading and processing..."
     )
     af3_pairs = [
@@ -266,7 +270,7 @@ def main():
 
     assert len(af3_pairs) > 0
 
-    logging.info(
+    logger.info(
         f"Done. Got {len(af3_pairs)} complexes, {sum(pair.best_seq is not None for pair in af3_pairs)} of which mapped to a chain in {cif_name}. Creating attribute file..."
     )
 
@@ -301,14 +305,14 @@ def main():
                         continue
                     f.write(f"\t/{match_chain_id}:{i + 1}\t{icp_vals[i]}\n")
 
-    logging.info(f"Wrote {str(out_file)}")
+    logger.info(f"Wrote {str(out_file)}")
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 
-    logging.info("Mapping screen to structure...")
+    logger.info("Mapping screen to structure...")
 
     main()
 
-    logging.info("All done!")
+    logger.info("All done!")

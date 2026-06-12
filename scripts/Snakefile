@@ -49,6 +49,8 @@ rule all:
         )
         if structs is not None
         else [],
+        f"{PAIR_DIR}/screen_metrics.tsv",
+        f"{PAIR_DIR}/screen_metrics.html",
 
 
 if PROTEINLIST_BAITS:
@@ -59,8 +61,6 @@ if PROTEINLIST_BAITS:
         output:
             accessions=f"{PAIR_DIR}/baits_accessions.txt",
             fasta=f"{PAIR_DIR}/baits.fasta",
-        wildcard_constraints:
-            bait="|".join(PROTEINLIST_BAITS),
         run:
             copy(input.source, output.accessions)
             accessions = Path(input.source).read_text().splitlines()
@@ -162,7 +162,8 @@ rule run_alphafast:
       --container /home/vzl634/datadir/alphafast.sif \
       --db_dir /home/vzl634/datadir/mmseqs2_dbs \
       --weights_dir /home/vzl634/datadir/af3_latest/alphafold3 \
-      --temp_dir /scratch/$USER/alphafast_tmp
+      --temp_dir /scratch/$USER/alphafast_tmp \
+      --jax_compilation_cache_dir /scratch/$USER/alphafast_jax_cache
     """
 
 
@@ -184,4 +185,33 @@ rule map_prediction_to_structure:
       --af3_dir {input.predictions_dir} \
       --out_file  {output.attr_file} \
       --cif_file {input.cif_structure}  \
+    """
+
+
+rule get_and_plot_metrics:
+    input:
+        predictions_dir=f"{PAIR_DIR}/alphafast_output",
+    output:
+        metrics_table=f"{PAIR_DIR}/screen_metrics.tsv",
+        metrics_plot=f"{PAIR_DIR}/screen_metrics.html",
+    conda:
+        envs["structural"]
+    shell:
+        """ 
+        IPSAE_DIR={PAIR_DIR}/ipSAE
+        mkdir -p $IPSAE_DIR 
+
+        for pair in {input.alphafast_output}/*; do
+          echo "Calculating metrics for ${{pair}}"
+          pair_name=$(basename $pair)
+          jpair=${{pair}}/${{pair_name}}_confidences.json
+          model=${{pair}}/${{pair_name}}_model.cif
+          python ipsae.py $jpair $model 10 10
+        done
+
+        mv inference_output/*/*10_10* $IPSAE_DIR/
+
+        ipsae_viz_af3.py --ipsae_dir $IPSAE_DIR
+
+      done
     """
