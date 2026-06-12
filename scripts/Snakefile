@@ -202,16 +202,14 @@ rule get_and_plot_metrics:
         mkdir -p $IPSAE_DIR 
 
         for pair in {input.alphafast_output}/*; do
-          echo "Calculating metrics for ${{pair}}"
-          pair_name=$(basename $pair)
-          jpair=${{pair}}/${{pair_name}}_confidences.json
-          model=${{pair}}/${{pair_name}}_model.cif
-          python ipsae.py $jpair $model 10 10
+            echo "Calculating metrics for ${{pair}}"
+            pair_name=$(basename $pair)
+            jpair=${{pair}}/${{pair_name}}_confidences.json
+            model=${{pair}}/${{pair_name}}_model.cif
+            python ipsae.py $jpair $model 10 10
         done
 
         mv inference_output/*/*10_10* $IPSAE_DIR/
 
         ipsae_viz_af3.py --ipsae_dir $IPSAE_DIR
-
-      done
     """
