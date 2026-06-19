@@ -2,7 +2,7 @@ from snakemake.logging import logger
 from pathlib import Path
 import requests
 import json
-from shutil import copy
+from shutil import copy, rmtree
 
 from load_utils import (
     fasta_to_dict,
@@ -37,20 +37,40 @@ logger.info(f"Got BAITS: {BAITS_NAMED}")
 
 rule all:
     input:
+        # expand(
+        #     f"{PAIR_DIR}/alphafast_output",
+        #     bait=BAITS_NAMED,
+        #     prey=PREYS,
+        # ),
         expand(
-            f"{PAIR_DIR}/alphafast_output",
-            bait=BAITS_NAMED,
-            prey=PREYS,
-        ),
-        expand(
-            f"{PAIR_DIR}/processed_output/{{bait}}.defattr",
+            f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.defattr",
             bait=BAITS_NAMED,
             prey=PREYS,
         )
         if structs is not None
         else [],
-        f"{PAIR_DIR}/screen_metrics.tsv",
-        f"{PAIR_DIR}/screen_metrics.html",
+        expand(
+            f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.cxs",
+            bait=BAITS_NAMED,
+            prey=PREYS,
+        )
+        if structs is not None
+        else [],
+        expand(
+            f"{PAIR_DIR}/processed_output/screen_metrics.tsv",
+            bait=BAITS_NAMED,
+            prey=PREYS,
+        ),
+        expand(
+            f"{PAIR_DIR}/processed_output/screen_metrics.html",
+            bait=BAITS_NAMED,
+            prey=PREYS,
+        ),
+        expand(
+            f"{PAIR_DIR}/processed_output/projected_icp.tsv",
+            bait=BAITS_NAMED,
+            prey=PREYS,
+        ),
 
 
 if PROTEINLIST_BAITS:
@@ -101,11 +121,14 @@ rule make_input_json:
         json_dir=directory(f"{PAIR_DIR}/data_pipeline_input"),
     params:
         max_len=config.get("total_max_res", 2549),
+        predictions_dir=f"{PAIR_DIR}/alphafast_output",
     run:
         preys = fasta_to_dict(input.preys_fasta)
         baits = fasta_to_dict(input.baits_fasta)
 
-        Path(output.json_dir).mkdir(parents=True, exist_ok=True)
+        if Path(output.json_dir).exists():
+            rmtree(output.json_dir)
+        Path(output.json_dir).mkdir(parents=True)
 
         for prey_name, prey_seq in preys.items():
             for bait_name, bait_seq in baits.items():
@@ -117,10 +140,7 @@ rule make_input_json:
                         f"Skipped pair {name} (too long - {total_len} residues total, max is {params.max_len})"
                     )
                     continue
-                if (
-                    Path(output.json_dir).parent
-                    / f"alphafast_output/{name}/{name}_model.cif"
-                ).exists():
+                if (Path(params.predictions_dir) / f"{name}/{name}_model.cif").exists():
                     logger.info(
                         f"Skipped pair {name} (output structure already exists)"
                     )
@@ -150,6 +170,11 @@ rule run_alphafast:
         slurm_partition="gpuqueue",
     shell:
         """
+    if [ -z "$(ls -A "{input.json_dir}")" ]; then
+      echo 'No json to process at {input.json_dir}, skipping alignment and inference'
+      exit 0
+    fi
+
     export SINGULARITYENV_XLA_FLAGS="--xla_disable_hlo_passes=custom-kernel-fusion-rewriter"
     export APPTAINERENV_XLA_FLAGS="--xla_disable_hlo_passes=custom-kernel-fusion-rewriter"
 
@@ -172,18 +197,18 @@ rule map_prediction_to_structure:
         predictions_dir=f"{PAIR_DIR}/alphafast_output",
         cif_structure=lambda wc: BAITS_DICT[wc.bait],
     output:
-        attr_file=f"{PAIR_DIR}/processed_output/{{bait}}.defattr",
+        attr_file=f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.defattr",
     resources:
-        mem_mb=16000,
+        mem_mb=64000,
         cpus_per_task=8,
-        runtime=1440,
+        runtime=180,
     conda:
         envs["structural"]
     shell:
         """
-    python AF3screenToStructure.py \
+    AF3screenToStructure.py \
       --af3_dir {input.predictions_dir} \
-      --out_file  {output.attr_file} \
+      --out_file {output.attr_file} \
       --cif_file {input.cif_structure}  \
     """
 
@@ -192,24 +217,81 @@ rule get_and_plot_metrics:
     input:
         predictions_dir=f"{PAIR_DIR}/alphafast_output",
     output:
-        metrics_table=f"{PAIR_DIR}/screen_metrics.tsv",
-        metrics_plot=f"{PAIR_DIR}/screen_metrics.html",
+        metrics_table=f"{PAIR_DIR}/processed_output/screen_metrics.tsv",
+        metrics_plot=f"{PAIR_DIR}/processed_output/screen_metrics.html",
+    params:
+        ipsae_dir=f"{PAIR_DIR}/ipSAE",
+        out_dir=f"{PAIR_DIR}/processed_output",
     conda:
         envs["structural"]
+    resources:
+        mem_mb=16000,
+        cpus_per_task=2,
+        runtime=60,
+    group:
+        "stats"
     shell:
         """ 
-        IPSAE_DIR={PAIR_DIR}/ipSAE
-        mkdir -p $IPSAE_DIR 
+        mkdir -p {params.ipsae_dir} 
 
-        for pair in {input.alphafast_output}/*; do
+        for pair in {input.predictions_dir}/*; do
             echo "Calculating metrics for ${{pair}}"
             pair_name=$(basename $pair)
             jpair=${{pair}}/${{pair_name}}_confidences.json
             model=${{pair}}/${{pair_name}}_model.cif
-            python ipsae.py $jpair $model 10 10
+            ipsae.py $jpair $model 10 10
         done
 
-        mv inference_output/*/*10_10* $IPSAE_DIR/
+        mv {input.predictions_dir}/*/*10_10* {params.ipsae_dir}/
 
-        ipsae_viz_af3.py --ipsae_dir $IPSAE_DIR
+        ipsae_viz_af3.py \
+          --ipsae_dir {params.ipsae_dir} \
+          --out_dir {params.out_dir}
+    """
+
+
+rule apply_defattr:
+    input:
+        cif_structure=lambda wc: BAITS_DICT[wc.bait],
+        attr_file=f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.defattr",
+    output:
+        attr_structure=f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.cxs",
+    resources:
+        runtime=60,
+        mem_mb=4000,
+    shell:
+        """
+        module load miniconda/latest libxscrnsaver/1.0.0 chimerax/1.3
+
+        ChimeraX --nogui <<'EOF'
+        open {input.cif_structure}
+        open {input.attr_file}
+        color byattribute r:iCP_{wildcards.bait}_{wildcards.prey} #!1 target csab palette 0,#0e8bff:0.5,white:1,red noValueColor #999999
+        save {output.attr_structure}
+        exit
+        EOF
+    """
+
+
+rule project_screen:
+    input:
+        predictions_dir=f"{PAIR_DIR}/alphafast_output",
+    output:
+        out_table=f"{PAIR_DIR}/processed_output/projected_icp.tsv",
+    params:
+        output_dir=f"{PAIR_DIR}/processed_output",
+    group:
+        "stats"
+    resources:
+        mem_mb=4000,
+        cpus_per_task=2,
+        runtime=60,
+    conda:
+        envs["structural"]
+    shell:
+        """
+        project_screen.py \
+            --prediction_dir {input.predictions_dir} \
+            --output_dir {params.output_dir} \
+            --n_cores {resources.cpus_per_task}
     """
