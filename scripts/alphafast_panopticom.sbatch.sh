@@ -8,13 +8,13 @@
 #SBATCH --time=7-05:05:00               # max. running time of the job, format in D-HH:MM:SS
 #SBATCH --output=affast_test%j.log   # Standard output and error log, '%j' gives the job ID
 
-export PATH="$PATH:/home/vzl634/datadir/af3_screening/scripts"
-
 module purge
 module load miniconda/latest
 
 source /maps/projects/dan1/apps/miniconda/latest/etc/profile.d/conda.sh
 conda activate random
+
+export PATH="$PATH:/home/vzl634/datadir/af3_screening/scripts"
 
 snakemake -s /home/vzl634/datadir/af3_screening/scripts/Snakefile \
   --profile default \

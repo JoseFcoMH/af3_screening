@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import numpy as np
 from Bio.PDB.MMCIF2Dict import MMCIF2Dict
 from Bio.Seq import Seq
@@ -293,8 +295,7 @@ def main():
     best_pairs = [x[2] for x in best_dict.values()]
 
     with open(out_file, "w+") as f:
-        prey = out_file.parents.parents.name.split("__")[0]
-        bait = out_file.parents.parents.name.split("__")[1]
+        prey, bait = out_file.parents[1].name.split("__")
         f.write(f"attribute: iCP_{prey}_{bait}\nmatch mode: any\nrecipient: residues\n")
         for pair in best_pairs:
             if pair is not None:

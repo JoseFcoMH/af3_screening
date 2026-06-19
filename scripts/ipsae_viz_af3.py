@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import polars as pl
 import pandas as pd
 import plotly.express as px
@@ -14,7 +16,7 @@ def load_ipsae(ipsae_dir: Path) -> pl.DataFrame:
     for f in files:
         logger.info(f"On file {f}")
         try:
-            new_df = pl.from_pandas(pd.read_csv(f, sep=r"\s+"))
+            new_df = pl.from_pandas(pd.read_csv(f, sep="\s+"))
             if len(new_df) > 0:
                 ipsae_raw.append(new_df)
         except:
@@ -24,7 +26,7 @@ def load_ipsae(ipsae_dir: Path) -> pl.DataFrame:
     ipsae_raw = pl.concat(ipsae_raw)
 
     return (
-        ipsae_raw.filter(pl.col("Type") == "min")
+        ipsae_raw.filter(pl.col("Type") == "max")
         .with_columns(pl.col("Model").str.split("/").list.get(-2).alias("pair"))
         .sort(by="ipSAE", descending=True)
     )
@@ -46,11 +48,11 @@ def plot_metrics(ipsaes: pl.DataFrame):
 def main():
     logger.info("Loading scores...")
     ipsae = load_ipsae(screen)
-    ipsae.write_csv(screen / "screen_metrics.tsv", separator="\t")
+    ipsae.write_csv(out_dir / "screen_metrics.tsv", separator="\t")
 
     logger.info("Scores loaded. Plotting and saving...")
     fig = plot_metrics(ipsae)
-    fig.write_html(screen / "screen_metrics.html", separator="\t")
+    fig.write_html(out_dir / "screen_metrics.html")
 
     logger.info("Done.")
 
@@ -61,7 +63,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--ipsae_dir", required=True, type=Path)
+    parser.add_argument("--out_dir", required=True, type=Path)
 
-    screen = parser.parse_args().ipsae_dir
+    args = parser.parse_args()
+    screen = args.ipsae_dir
+    out_dir = args.out_dir
 
     main()
