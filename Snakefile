@@ -3,6 +3,7 @@ from pathlib import Path
 import requests
 import json
 from shutil import copy, rmtree
+import yaml
 
 from load_utils import (
     fasta_to_dict,
@@ -10,6 +11,14 @@ from load_utils import (
     get_uniprot_ids_from_struc,
     dimer_template,
 )
+
+
+SCRIPT_DIR = workflow.source_path("scripts")
+ENV_DIR = workflow.source_path("envs")
+CONFIG_DIR = workflow.source_path("config")
+
+
+configfile: f"{CONFIG_DIR}/config.yaml"
 
 
 STRUCTURE_BAITS = []
@@ -26,7 +35,6 @@ BAITS_NAMED = list(BAITS_DICT.keys())
 
 PREYS = Path(config.get("proteins_screened")).read_text().strip().splitlines()
 
-envs = config.get("envs")
 WORK_DIR = config.get("work_dir")
 
 PAIR_DIR = f"{WORK_DIR}/{{bait}}__{{prey}}"
@@ -37,11 +45,11 @@ logger.info(f"Got BAITS: {BAITS_NAMED}")
 
 rule all:
     input:
-        # expand(
-        #     f"{PAIR_DIR}/alphafast_output",
-        #     bait=BAITS_NAMED,
-        #     prey=PREYS,
-        # ),
+        expand(
+            f"{PAIR_DIR}/alphafast_output",
+            bait=BAITS_NAMED,
+            prey=PREYS,
+        ),
         expand(
             f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.defattr",
             bait=BAITS_NAMED,
@@ -97,7 +105,7 @@ if STRUCTURE_BAITS:
             accessions=f"{PAIR_DIR}/baits_accessions.txt",
             fasta=f"{PAIR_DIR}/baits.fasta",
         conda:
-            envs["structural"]
+            f"{ENV_DIR}/base.yaml"
         run:
             uni_ids = get_uniprot_ids_from_struc(input.source)
             fasta = fetch_uniprot_fasta(uni_ids)
@@ -181,14 +189,14 @@ rule run_alphafast:
     module purge
     module load singularity/3.8.0 apptainer
 
-    /home/vzl634/datadir/alphafast/scripts/run_alphafast.sh \
+    {config['alphafast']['script_dir']}/run_alphafast.sh \
       --input_dir {input.json_dir} \
       --output_dir {output.predictions_dir} \
-      --container /home/vzl634/datadir/alphafast.sif \
-      --db_dir /home/vzl634/datadir/mmseqs2_dbs \
-      --weights_dir /home/vzl634/datadir/af3_latest/alphafold3 \
-      --temp_dir /scratch/$USER/alphafast_tmp \
-      --jax_compilation_cache_dir /scratch/$USER/alphafast_jax_cache
+      --container {config['alphafast']['container']} \
+      --db_dir {config['alphafast']['db_dir']} \
+      --weights_dir {config['alphafast']['weights_dir']} \
+      --temp_dir {config['alphafast']['temp_dir']} \
+      --jax_compilation_cache_dir {config['alphafast']['temp_dir']}
     """
 
 
@@ -203,13 +211,13 @@ rule map_prediction_to_structure:
         cpus_per_task=8,
         runtime=180,
     conda:
-        envs["structural"]
+        f"{ENV_DIR}/base.yaml"
     shell:
         """
-    AF3screenToStructure.py \
-      --af3_dir {input.predictions_dir} \
-      --out_file {output.attr_file} \
-      --cif_file {input.cif_structure}  \
+      {SCRIPT_DIR}/AF3screenToStructure.py \
+          --af3_dir {input.predictions_dir} \
+          --out_file {output.attr_file} \
+          --cif_file {input.cif_structure}  \
     """
 
 
@@ -223,7 +231,7 @@ rule get_and_plot_metrics:
         ipsae_dir=f"{PAIR_DIR}/ipSAE",
         out_dir=f"{PAIR_DIR}/processed_output",
     conda:
-        envs["structural"]
+        f"{ENV_DIR}/base.yaml"
     resources:
         mem_mb=16000,
         cpus_per_task=2,
@@ -244,7 +252,7 @@ rule get_and_plot_metrics:
 
         mv {input.predictions_dir}/*/*10_10* {params.ipsae_dir}/
 
-        ipsae_viz_af3.py \
+        {SCRIPT_DIR}/ipsae_viz_af3.py \
           --ipsae_dir {params.ipsae_dir} \
           --out_dir {params.out_dir}
     """
@@ -287,10 +295,10 @@ rule project_screen:
         cpus_per_task=2,
         runtime=60,
     conda:
-        envs["structural"]
+        f"{ENV_DIR}/base.yaml"
     shell:
         """
-        project_screen.py \
+        {SCRIPT_DIR}/project_screen.py \
             --prediction_dir {input.predictions_dir} \
             --output_dir {params.output_dir} \
             --n_cores {resources.cpus_per_task}

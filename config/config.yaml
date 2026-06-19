@@ -1,0 +1,12 @@
+reference_structures: /home/vzl634/datadir/af3_runs/pipeline_runs/pipeline_inputs/structures.txt
+proteins_screened: /home/vzl634/datadir/af3_runs/pipeline_runs/pipeline_inputs/preys.txt
+
+work_dir: /home/vzl634/datadir/af3_runs/pipeline_runs
+
+alphafast:
+  script_dir: /home/vzl634/datadir/alphafast/scripts
+  container: /home/vzl634/datadir/alphafast.sif
+  db_dir: /home/vzl634/datadir/mmseqs2_dbs
+  weights_dir: /home/vzl634/datadir/af3_latest/alphafold3
+  temp_dir: /scratch/vzl634/alphafast_tmp
+  jax_compilation_cache_dir: /scratch/vzl634/alphafast_jax_cache
