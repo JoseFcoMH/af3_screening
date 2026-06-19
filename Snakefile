@@ -43,6 +43,11 @@ logger.info(f"Got PREYS: {PREYS}")
 logger.info(f"Got BAITS: {BAITS_NAMED}")
 
 
+def modules_for(rule_name):
+    mods = config.get("modules", {}).get(rule_name, [])
+    return "" if not mods else "module load " + " ".join(mods)
+
+
 rule all:
     input:
         expand(
@@ -169,13 +174,8 @@ rule run_alphafast:
         json_dir=f"{PAIR_DIR}/data_pipeline_input",
     output:
         predictions_dir=directory(f"{PAIR_DIR}/alphafast_output"),
-    resources:
-        mem_mb=256_000,
-        cpus_per_task=8,
-        runtime=1440 * 7,
-        uses_gpu=1,
-        gres="gpu:1",
-        slurm_partition="gpuqueue",
+    params:
+        modules=modules_for("run_alphafast"),
     shell:
         """
     if [ -z "$(ls -A "{input.json_dir}")" ]; then
@@ -186,8 +186,7 @@ rule run_alphafast:
     export SINGULARITYENV_XLA_FLAGS="--xla_disable_hlo_passes=custom-kernel-fusion-rewriter"
     export APPTAINERENV_XLA_FLAGS="--xla_disable_hlo_passes=custom-kernel-fusion-rewriter"
 
-    module purge
-    module load singularity/3.8.0 apptainer
+    {params.modules}
 
     {config['alphafast']['script_dir']}/run_alphafast.sh \
       --input_dir {input.json_dir} \
@@ -206,15 +205,11 @@ rule map_prediction_to_structure:
         cif_structure=lambda wc: BAITS_DICT[wc.bait],
     output:
         attr_file=f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.defattr",
-    resources:
-        mem_mb=64000,
-        cpus_per_task=8,
-        runtime=180,
     conda:
         f"{ENV_DIR}/base.yaml"
     shell:
         """
-      {SCRIPT_DIR}/AF3screenToStructure.py \
+      python {SCRIPT_DIR}/AF3screenToStructure.py \
           --af3_dir {input.predictions_dir} \
           --out_file {output.attr_file} \
           --cif_file {input.cif_structure}  \
@@ -232,10 +227,6 @@ rule get_and_plot_metrics:
         out_dir=f"{PAIR_DIR}/processed_output",
     conda:
         f"{ENV_DIR}/base.yaml"
-    resources:
-        mem_mb=16000,
-        cpus_per_task=2,
-        runtime=60,
     group:
         "stats"
     shell:
@@ -247,12 +238,12 @@ rule get_and_plot_metrics:
             pair_name=$(basename $pair)
             jpair=${{pair}}/${{pair_name}}_confidences.json
             model=${{pair}}/${{pair_name}}_model.cif
-            ipsae.py $jpair $model 10 10
+            python {SCRIPT_DIR}/ipsae.py $jpair $model 10 10
         done
 
         mv {input.predictions_dir}/*/*10_10* {params.ipsae_dir}/
 
-        {SCRIPT_DIR}/ipsae_viz_af3.py \
+        python {SCRIPT_DIR}/ipsae_viz_af3.py \
           --ipsae_dir {params.ipsae_dir} \
           --out_dir {params.out_dir}
     """
@@ -264,12 +255,11 @@ rule apply_defattr:
         attr_file=f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.defattr",
     output:
         attr_structure=f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.cxs",
-    resources:
-        runtime=60,
-        mem_mb=4000,
+    params:
+        modules=modules_for("apply_defattr"),
     shell:
         """
-        module load miniconda/latest libxscrnsaver/1.0.0 chimerax/1.3
+        {params.modules}
 
         ChimeraX --nogui <<'EOF'
         open {input.cif_structure}
@@ -290,16 +280,12 @@ rule project_screen:
         output_dir=f"{PAIR_DIR}/processed_output",
     group:
         "stats"
-    resources:
-        mem_mb=4000,
-        cpus_per_task=2,
-        runtime=60,
     conda:
         f"{ENV_DIR}/base.yaml"
     shell:
         """
-        {SCRIPT_DIR}/project_screen.py \
+        python {SCRIPT_DIR}/project_screen.py \
             --prediction_dir {input.predictions_dir} \
             --output_dir {params.output_dir} \
-            --n_cores {resources.cpus_per_task}
+            --n_cores {threads}
     """
