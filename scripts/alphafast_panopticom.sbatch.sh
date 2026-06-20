@@ -11,11 +11,20 @@
 source /maps/projects/dan1/apps/miniconda/latest/etc/profile.d/conda.sh
 conda activate random
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(dirname "$SCRIPT_DIR")"
-
 CONFIG_FILE="$(realpath "$1")"
 CONFIG_DIR="$(dirname "$CONFIG_FILE")"
+
+REPO_DIR="$(realpath $2)"
+
+echo "Repo dir: $REPO_DIR"
+echo "Config file: $CONFIG_FILE"
+
+snakemake \
+  -s "$REPO_DIR/Snakefile" \
+  --profile "$REPO_DIR/profiles/danhead" \
+  --directory "$CONFIG_DIR" \
+  --configfile "$CONFIG_FILE" \
+  --unlock
 
 snakemake \
   -s "$REPO_DIR/Snakefile" \

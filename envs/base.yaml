@@ -6,5 +6,7 @@ dependencies:
   - polars
   - pandas
   - altair
+  - plotly
   - numpy
   - biopython
+  - vl-convert-python

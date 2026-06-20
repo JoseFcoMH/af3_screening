@@ -5,7 +5,7 @@ import json
 from shutil import copy, rmtree
 import yaml
 
-from load_utils import (
+from scripts.load_utils import (
     fasta_to_dict,
     fetch_uniprot_fasta,
     get_uniprot_ids_from_struc,
@@ -13,9 +13,13 @@ from load_utils import (
 )
 
 
-SCRIPT_DIR = workflow.source_path("scripts")
-ENV_DIR = workflow.source_path("envs")
-CONFIG_DIR = workflow.source_path("config")
+SNAKEFILE_DIR = Path(workflow.basedir).resolve()
+
+logger.info(f"Snakefile at: {SNAKEFILE_DIR}")
+
+SCRIPT_DIR = str(SNAKEFILE_DIR / "scripts")
+ENV_DIR = str(SNAKEFILE_DIR / "envs")
+CONFIG_DIR = str(SNAKEFILE_DIR / "config")
 
 
 configfile: f"{CONFIG_DIR}/config.yaml"
@@ -176,26 +180,32 @@ rule run_alphafast:
         predictions_dir=directory(f"{PAIR_DIR}/alphafast_output"),
     params:
         modules=modules_for("run_alphafast"),
+        af_scriptdir=config["alphafast"]["script_dir"],
+        af_container=config["alphafast"]["container"],
+        af_db_dir=config["alphafast"]["db_dir"],
+        af_weights_dir=config["alphafast"]["weights_dir"],
+        af_temp_dir=config["alphafast"]["temp_dir"],
+        af_jax_dir=config["alphafast"]["jax_compilation_cache_dir"],
     shell:
         """
-    if [ -z "$(ls -A "{input.json_dir}")" ]; then
-      echo 'No json to process at {input.json_dir}, skipping alignment and inference'
-      exit 0
-    fi
+        if [ -z "$(ls -A "{input.json_dir}")" ]; then
+          echo 'No json to process at {input.json_dir}, skipping alignment and inference'
+          exit 0
+        fi
 
-    export SINGULARITYENV_XLA_FLAGS="--xla_disable_hlo_passes=custom-kernel-fusion-rewriter"
-    export APPTAINERENV_XLA_FLAGS="--xla_disable_hlo_passes=custom-kernel-fusion-rewriter"
+        export SINGULARITYENV_XLA_FLAGS="--xla_disable_hlo_passes=custom-kernel-fusion-rewriter"
+        export APPTAINERENV_XLA_FLAGS="--xla_disable_hlo_passes=custom-kernel-fusion-rewriter"
 
-    {params.modules}
+        {params.modules}
 
-    {config['alphafast']['script_dir']}/run_alphafast.sh \
-      --input_dir {input.json_dir} \
-      --output_dir {output.predictions_dir} \
-      --container {config['alphafast']['container']} \
-      --db_dir {config['alphafast']['db_dir']} \
-      --weights_dir {config['alphafast']['weights_dir']} \
-      --temp_dir {config['alphafast']['temp_dir']} \
-      --jax_compilation_cache_dir {config['alphafast']['temp_dir']}
+        {params.af_scriptdir}/run_alphafast.sh \
+          --input_dir {input.json_dir} \
+          --output_dir {output.predictions_dir} \
+          --container {params.af_container} \
+          --db_dir {params.af_db_dir} \
+          --weights_dir {params.af_weights_dir} \
+          --temp_dir {params.af_temp_dir} \
+          --jax_compilation_cache_dir {params.af_jax_dir}
     """
 
 

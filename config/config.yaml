@@ -10,3 +10,13 @@ alphafast:
   weights_dir: /home/vzl634/datadir/af3_latest/alphafold3
   temp_dir: /scratch/vzl634/alphafast_tmp
   jax_compilation_cache_dir: /scratch/vzl634/alphafast_jax_cache
+
+modules:
+  apply_defattr:
+    - miniconda/latest
+    - libxscrnsaver/1.0.0
+    - chimerax/1.3
+
+  run_alphafast:
+    - singularity/3.8.0
+    - apptainer
