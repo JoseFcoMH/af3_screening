@@ -138,14 +138,9 @@ rule make_input_json:
         json_dir=directory(f"{PAIR_DIR}/data_pipeline_input"),
     params:
         max_len=config.get("total_max_res", 2549),
-        predictions_dir=f"{PAIR_DIR}/alphafast_output",
     run:
         preys = fasta_to_dict(input.preys_fasta)
         baits = fasta_to_dict(input.baits_fasta)
-
-        if Path(output.json_dir).exists():
-            rmtree(output.json_dir)
-        Path(output.json_dir).mkdir(parents=True)
 
         for prey_name, prey_seq in preys.items():
             for bait_name, bait_seq in baits.items():
@@ -155,11 +150,6 @@ rule make_input_json:
                 if (total_len := len(prey_seq) + len(bait_seq)) > params.max_len:
                     logger.warning(
                         f"Skipped pair {name} (too long - {total_len} residues total, max is {params.max_len})"
-                    )
-                    continue
-                if (Path(params.predictions_dir) / f"{name}/{name}_model.cif").exists():
-                    logger.info(
-                        f"Skipped pair {name} (output structure already exists)"
                     )
                     continue
 
