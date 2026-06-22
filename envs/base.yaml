@@ -5,6 +5,7 @@ dependencies:
   - python=3.11
   - polars
   - pandas
+  - pyarrow
   - altair
   - plotly
   - numpy

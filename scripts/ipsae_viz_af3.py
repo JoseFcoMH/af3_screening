@@ -15,13 +15,11 @@ def load_ipsae(ipsae_dir: Path) -> pl.DataFrame:
     ipsae_raw = []
     for f in files:
         logger.info(f"On file {f}")
-        try:
-            new_df = pl.from_pandas(pd.read_csv(f, sep="\s+"))
-            if len(new_df) > 0:
-                ipsae_raw.append(new_df)
-        except:
-            logger.warning(f"Skipped {f}")
-            continue
+        new_df = pl.from_pandas(pd.read_csv(f, sep=r"\s+"))
+        if len(new_df) > 0:
+            ipsae_raw.append(new_df)
+        else:
+            logger.warning(f"Skipped {f} (could not read table)")
 
     ipsae_raw = pl.concat(ipsae_raw)
 
@@ -41,6 +39,15 @@ def plot_metrics(ipsaes: pl.DataFrame):
         color="ipTM_af",
         hover_data=["pair", "ipTM_af", "pDockQ", "pDockQ2"],
         template="plotly_white",
+    )
+    fig.update_traces(marker=dict(size=10))
+    fig.update_layout(
+        xaxis=dict(range=[0, 1]),
+        yaxis=dict(range=[0, 1]),
+    )
+    fig.update_yaxes(
+        scaleanchor="x",
+        scaleratio=1,
     )
     return fig
 

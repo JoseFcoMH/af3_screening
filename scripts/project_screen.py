@@ -74,9 +74,9 @@ def find_predictions(prediction_dir: Path) -> list[Path]:
 
 
 def make_chart(data: pl.DataFrame) -> alt.FacetChart:
-    base = (
+    line = (
         alt.Chart(data)
-        .mark_line(point=True)
+        .mark_line()
         .encode(
             x=alt.X("residue:Q", title="Residue #"),
             y=alt.Y(
@@ -85,15 +85,35 @@ def make_chart(data: pl.DataFrame) -> alt.FacetChart:
                 scale=alt.Scale(domain=[0, 1]),
             ),
             color=alt.Color("name_B:N", title="Interactor"),
+        )
+    )
+
+    points = (
+        alt.Chart(data)
+        .transform_filter("datum.icp > 0.4")
+        .mark_point(size=40)
+        .encode(
+            x="residue:Q",
+            y="icp:Q",
+            color="name_B:N",
             tooltip=[
                 alt.Tooltip("name_B:N", title="Interactor"),
                 alt.Tooltip("residue:Q", title="Residue"),
                 alt.Tooltip("icp:Q", title="Contact probability", format=".2f"),
             ],
         )
-        .properties(height=400, width=600)
     )
-    return base.facet(row=alt.Row("name_A:N"))
+
+    chart = (
+        alt.layer(line, points)
+        .properties(
+            height=400,
+            width=600,
+        )
+        .interactive()
+        .facet(row=alt.Row("name_A:N", title="Prey"))
+    )
+    return chart
 
 
 def main():
@@ -120,7 +140,7 @@ def main():
     results_table = pl.concat(results)
     results_table.write_csv(out_table, separator="\t")
 
-    logger.info(f"Done. Saved results as {out_table}. \nStarted plotting.")
+    logger.info(f"Done. Saved results as {out_table}. Started plotting.")
 
     hit_genes = results_table.filter(pl.col("icp").gt(0.6)).unique(["name_A", "name_B"])
     filtered_data = results_table.join(hit_genes, on=["name_A", "name_B"], how="semi")
@@ -130,7 +150,7 @@ def main():
     else:
         logger.info(f"Kept {len(filtered_data.unique('name_B'))} hits to plot.")
         chart = make_chart(filtered_data)
-        chart.save(out_html, inline=True)
+        chart.save(out_html, inline=True, embed_options={"renderer": "canvas"})
         chart.save(out_png, scale_factor=3.0)
         logger.info("Saved plots.")
 

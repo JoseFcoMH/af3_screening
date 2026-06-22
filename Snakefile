@@ -2,8 +2,7 @@ from snakemake.logging import logger
 from pathlib import Path
 import requests
 import json
-from shutil import copy, rmtree
-import yaml
+from shutil import copy
 
 from scripts.load_utils import (
     fasta_to_dict,
@@ -142,6 +141,8 @@ rule make_input_json:
         preys = fasta_to_dict(input.preys_fasta)
         baits = fasta_to_dict(input.baits_fasta)
 
+        Path(output.json_dir).mkdir()
+
         for prey_name, prey_seq in preys.items():
             for bait_name, bait_seq in baits.items():
 
@@ -165,9 +166,10 @@ rule make_input_json:
 
 rule run_alphafast:
     input:
-        json_dir=f"{PAIR_DIR}/data_pipeline_input",
+        json_dir=rules.make_input_json.output.json_dir,
     output:
         predictions_dir=directory(f"{PAIR_DIR}/alphafast_output"),
+        done=touch(f"{PAIR_DIR}/alphafast_output/.done"),
     params:
         modules=modules_for("run_alphafast"),
         af_scriptdir=config["alphafast"]["script_dir"],
@@ -201,7 +203,8 @@ rule run_alphafast:
 
 rule map_prediction_to_structure:
     input:
-        predictions_dir=f"{PAIR_DIR}/alphafast_output",
+        rules.run_alphafast.output.done,
+        predictions_dir=rules.run_alphafast.output.predictions_dir,
         cif_structure=lambda wc: BAITS_DICT[wc.bait],
     output:
         attr_file=f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.defattr",
@@ -218,7 +221,8 @@ rule map_prediction_to_structure:
 
 rule get_and_plot_metrics:
     input:
-        predictions_dir=f"{PAIR_DIR}/alphafast_output",
+        rules.run_alphafast.output.done,
+        predictions_dir=rules.run_alphafast.output.predictions_dir,
     output:
         metrics_table=f"{PAIR_DIR}/processed_output/screen_metrics.tsv",
         metrics_plot=f"{PAIR_DIR}/processed_output/screen_metrics.html",
@@ -273,7 +277,8 @@ rule apply_defattr:
 
 rule project_screen:
     input:
-        predictions_dir=f"{PAIR_DIR}/alphafast_output",
+        rules.run_alphafast.output.done,
+        predictions_dir=rules.run_alphafast.output.predictions_dir,
     output:
         out_table=f"{PAIR_DIR}/processed_output/projected_icp.tsv",
     params:
