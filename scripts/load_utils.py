@@ -16,6 +16,24 @@ dimer_template = {
     "version": 3,
 }
 
+protein_drug_template = {
+    "name": "protein_drug_prediction",
+    "sequences": [
+        {"protein": {"id": "A", "sequence": ""}},
+        {"ligand": {"id": "B", "smiles": ""}},
+    ],
+    "modelSeeds": [514098765],
+    "dialect": "alphafold3",
+    "version": 3,
+}
+
+
+def load_smi(smi_path: Path) -> dict[str, str]:
+    return {
+        line.strip().split(" ")[1]: line.strip().split(" ")[0]
+        for line in smi_path.read_text().splitlines()
+    }
+
 
 def get_uniprot_ids_from_struc(cif_file: str) -> list[str]:
     from Bio.PDB.MMCIF2Dict import MMCIF2Dict
