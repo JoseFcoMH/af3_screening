@@ -174,10 +174,12 @@ rule run_alphafast:
         modules=modules_for("run_alphafast"),
         af_scriptdir=config["alphafast"]["script_dir"],
         af_container=config["alphafast"]["container"],
+        af_backend=config["alphafast"].get("backend", "singularity"),
         af_db_dir=config["alphafast"]["db_dir"],
         af_weights_dir=config["alphafast"]["weights_dir"],
         af_temp_dir=config["alphafast"]["temp_dir"],
         af_jax_dir=config["alphafast"]["jax_compilation_cache_dir"],
+        af_gpu_devices=config["alphafast"].get("gpu_devices", "0"),
     shell:
         """
         if [ -z "$(ls -A "{input.json_dir}")" ]; then
@@ -194,10 +196,12 @@ rule run_alphafast:
           --input_dir {input.json_dir} \
           --output_dir {output.predictions_dir} \
           --container {params.af_container} \
+          --backend {params.af_backend} \
           --db_dir {params.af_db_dir} \
           --weights_dir {params.af_weights_dir} \
           --temp_dir {params.af_temp_dir} \
-          --jax_compilation_cache_dir {params.af_jax_dir}
+          --jax_compilation_cache_dir {params.af_jax_dir} \
+          --gpu_devices {params.af_gpu_devices}
     """
 
 

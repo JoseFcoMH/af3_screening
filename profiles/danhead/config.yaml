@@ -13,15 +13,15 @@ resources:
   - uses_gpu=1
 
 default-resources:
-  - runtime=3600
+  - runtime=30m
   - cpus_per_task=1
   - mem_per_cpu=4096
 
 set-resources:
   run_alphafast:
-    mem_mb: 256000
+    mem_mb: 128000
     cpus_per_task: 8
-    runtime: 600000
+    runtime: 6d
     uses_gpu: 1
     gres: "gpu:1"
     slurm_partition: "gpuqueue"
