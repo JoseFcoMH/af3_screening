@@ -1,0 +1,23 @@
+reference_structures: /work/datadir/af3_runs/pipeline_test/structures.txt
+proteins_screened: /work/datadir/af3_runs/pipeline_test/preys.txt
+
+total_max_res: 4000
+
+work_dir: /work/datadir/af3_runs/pipeline_test
+
+alphafast:
+  script_dir: /work/repos/alphafast/scripts
+  container: romerolabduke/alphafast:latest
+  db_dir: /work/datadir/mmseqs2_dbs
+  weights_dir: /work/datadir/
+  temp_dir: /tmp/alphafast_tmp
+  jax_compilation_cache_dir: /tmp/alphafast_jax_cache
+  backend: udocker
+  gpu_devices: "0,1,2,3"
+
+modules:
+  apply_defattr:
+    - chimerax
+
+  run_alphafast:
+    - udocker

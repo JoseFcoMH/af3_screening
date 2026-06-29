@@ -3,11 +3,11 @@ channels:
 
 dependencies:
   - python=3.11
+  - numpy
   - polars
   - pandas
   - pyarrow
   - altair
   - plotly
-  - numpy
   - biopython
   - vl-convert-python

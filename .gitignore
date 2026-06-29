@@ -1,2 +1,5 @@
 logs
 *.log
+*__*
+.snakemake
+*.swp
