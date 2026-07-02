@@ -1,7 +1,7 @@
 reference_structures: /work/datadir/af3_runs/pipeline_test/structures.txt
 proteins_screened: /work/datadir/af3_runs/pipeline_test/preys.txt
 
-total_max_res: 4000
+total_max_res: 3200
 
 work_dir: /work/datadir/af3_runs/pipeline_test
 

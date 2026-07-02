@@ -1,4 +1,5 @@
 from snakemake.logging import logger
+import logging
 from pathlib import Path
 import requests
 import json
@@ -58,7 +59,9 @@ rule all:
             f"{PAIR_DIR}/alphafast_output/.done",
             bait=BAITS_NAMED,
             prey=PREYS,
-        ),
+        )
+        if False
+        else [],
         expand(
             f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.defattr",
             bait=BAITS_NAMED,
@@ -138,19 +141,22 @@ rule make_preys:
 
 rule make_input_json:
     input:
-        baits_fasta=f"{PAIR_DIR}/baits.fasta",
-        preys_fasta=f"{PAIR_DIR}/prey.fasta",
+        all_baits=expand(f"{PAIR_DIR}/baits.fasta", bait=BAITS_NAMED, prey=PREYS),
+        all_preys=expand(f"{PAIR_DIR}/prey.fasta", bait=BAITS_NAMED, prey=PREYS),
     output:
-        json_dir=temp(directory(f"{PAIR_DIR}/data_pipeline_input")),
+        json_temp=temp(directory(f"{WORK_DIR}/.affast_input")),
     log:
-        f"{LOG_DIR}/make_input_json.log",
+        f"{WORK_DIR}/make_input_json.log",
     params:
         max_len=config.get("total_max_res", 2549),
-        predictions_done=f"{PAIR_DIR}/alphafast_output",
     run:
-        preys = fasta_to_dict(input.preys_fasta)
-        baits = fasta_to_dict(input.baits_fasta)
-        Path(output.json_dir).mkdir()
+        preys = {}
+        baits = {}
+        for p in input.all_preys:
+            preys.update(fasta_to_dict(p))
+        for b in input.all_baits:
+            baits.update(fasta_to_dict(b))
+        Path(output.json_temp).mkdir(exist_ok=True)
         for prey_name, prey_seq in preys.items():
             for bait_name, bait_seq in baits.items():
                 name = f"{prey_name}__{bait_name}"
@@ -160,7 +166,11 @@ rule make_input_json:
                     )
                     continue
                 if (
-                    len(list(Path(params.predictions_done).glob(f"{name}/*.cif")))
+                    len(
+                        list(
+                            Path(WORK_DIR).glob(f"*/alphafast_output/{name}/*.cif")
+                        )
+                    )
                     > 0
                 ):
                     logger.info(
@@ -171,20 +181,17 @@ rule make_input_json:
                 dimer["name"] = name
                 dimer["sequences"][0]["protein"]["sequence"] = prey_seq
                 dimer["sequences"][1]["protein"]["sequence"] = bait_seq
-                path = Path(output.json_dir) / f"{name}.json"
+                path = Path(output.json_temp) / f"{name}.json"
                 path.write_text(json.dumps(dimer, indent=4))
 
 
 rule run_all_alphafast:
     input:
-        json_dirs=expand(f"{PAIR_DIR}/data_pipeline_input", bait=BAITS_DICT, prey=PREYS),
+        json_temp=rules.make_input_json.output.json_temp,
     output:
-        temp_dir=temp(directory(f"{WORK_DIR}/tmp")),
-        done=temp(touch(f"{WORK_DIR}/tmp/.done")),
+        predictions=temp(directory(f"{WORK_DIR}/.predictions_tmp")),
     params:
         modules=modules_for("run_alphafast"),
-        all_jsons=f"{WORK_DIR}/tmp/input",
-        predictions=f"{WORK_DIR}/tmp/predictions",
         af_scriptdir=config["alphafast"]["script_dir"],
         af_container=config["alphafast"]["container"],
         af_backend=config["alphafast"].get("backend", "singularity"),
@@ -195,12 +202,10 @@ rule run_all_alphafast:
         af_gpu_devices=config["alphafast"].get("gpu_devices", "0"),
     shell:
         """
-        mkdir -p {params.all_jsons}
-        mkdir -p {params.predictions}
+        exec > >(tee {log}) 2>&1
+        set -euo pipefail
 
-        for jdir in {input.json_dirs:q}; do
-            cp $jdir/*.json {params.all_jsons}/ || exit 0
-        done
+        mkdir -p {output.predictions}
 
         export SINGULARITYENV_XLA_FLAGS="--xla_disable_hlo_passes=custom-kernel-fusion-rewriter"
         export APPTAINERENV_XLA_FLAGS="--xla_disable_hlo_passes=custom-kernel-fusion-rewriter"
@@ -208,8 +213,8 @@ rule run_all_alphafast:
         {params.modules}
 
         {params.af_scriptdir}/run_alphafast.sh \
-            --input_dir {params.all_jsons} \
-            --output_dir {params.predictions} \
+            --input_dir {input.json_temp} \
+            --output_dir {output.predictions} \
             --container {params.af_container} \
             --backend {params.af_backend} \
             --db_dir {params.af_db_dir} \
@@ -222,34 +227,32 @@ rule run_all_alphafast:
 
 rule scatter_predictions:
     input:
-        rules.run_all_alphafast.output.done,
-        temp_dir=rules.run_all_alphafast.output.temp_dir,
+        temp_dir=rules.run_all_alphafast.output.predictions,
         bait_accessions=f"{PAIR_DIR}/baits_accessions.txt",
     output:
-        predictions_dir=directory(f"{PAIR_DIR}/alphafast_output"),
         done=touch(f"{PAIR_DIR}/alphafast_output/.done"),
+    params:
+        predictions_dir=f"{PAIR_DIR}/alphafast_output",
     run:
-        Path(output.predictions_dir).mkdir(exist_ok=True)
+        Path(params.predictions_dir).mkdir(exist_ok=True)
         baits = Path(input.bait_accessions).read_text().strip().splitlines()
-        for pred in Path(input.temp_dir).glob("predictions/*"):
+        for pred in Path(input.temp_dir).glob("*"):
             pred_names = pred.name.split("_")
             for bait in baits:
                 if (bait in pred_names) and (wildcards.prey in pred_names):
                     logger.info(
-                        f"Copying {pred.name} into {output.predictions_dir}"
+                        f"Copying {pred.name} into {params.predictions_dir}"
                     )
                     copytree(
                         pred,
-                        Path(output.predictions_dir) / pred.name,
+                        Path(params.predictions_dir) / pred.name,
                         dirs_exist_ok=True,
                     )
-                    continue
 
 
 rule map_prediction_to_structure:
     input:
         rules.scatter_predictions.output.done,
-        predictions_dir=rules.scatter_predictions.output.predictions_dir,
         cif_structure=lambda wc: BAITS_DICT[wc.bait],
     output:
         attr_file=f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.defattr",
@@ -257,10 +260,15 @@ rule map_prediction_to_structure:
         f"{LOG_DIR}/map_prediction_to_structure.log",
     conda:
         f"{ENV_DIR}/base.yaml"
+    params:
+        predictions_dir=f"{PAIR_DIR}/alphafast_output",
     shell:
         """
+        exec > >(tee {log}) 2>&1
+        set -euo pipefail
+
         python {SCRIPT_DIR}/AF3screenToStructure.py \
-            --af3_dir {input.predictions_dir} \
+            --af3_dir {params.predictions_dir} \
             --out_file {output.attr_file} \
             --cif_file {input.cif_structure}
         """
@@ -269,7 +277,6 @@ rule map_prediction_to_structure:
 rule get_and_plot_metrics:
     input:
         rules.scatter_predictions.output.done,
-        predictions_dir=rules.scatter_predictions.output.predictions_dir,
     output:
         metrics_table=f"{PAIR_DIR}/processed_output/screen_metrics.tsv",
         metrics_plot=f"{PAIR_DIR}/processed_output/screen_metrics.html",
@@ -281,12 +288,16 @@ rule get_and_plot_metrics:
         f"{ENV_DIR}/base.yaml"
     params:
         ipsae_dir=f"{PAIR_DIR}/ipSAE",
+        predictions_dir=f"{PAIR_DIR}/alphafast_output",
         out_dir=f"{PAIR_DIR}/processed_output",
     shell:
         """
+        exec > >(tee {log}) 2>&1
+        set -euo pipefail
+
         mkdir -p {params.ipsae_dir}
 
-        for pair in {input.predictions_dir}/*; do
+        for pair in {params.predictions_dir}/*; do
             echo "Calculating metrics for ${{pair}}"
             pair_name=$(basename $pair)
             jpair=${{pair}}/${{pair_name}}_confidences.json
@@ -297,11 +308,13 @@ rule get_and_plot_metrics:
             fi
         done
 
-        mv {input.predictions_dir}/*/*10_10* {params.ipsae_dir}/
+        mv {params.predictions_dir}/*/*10_10* {params.ipsae_dir}/
 
         python {SCRIPT_DIR}/ipsae_viz_af3.py \
             --ipsae_dir {params.ipsae_dir} \
             --out_dir {params.out_dir}
+
+        rm -rf {params.ipsae_dir}
         """
 
 
@@ -318,6 +331,9 @@ rule apply_defattr:
         attribute_name=lambda wc: f"{wc.bait}_{wc.prey}",
     shell:
         """
+        exec > >(tee {log}) 2>&1
+        set -euo pipefail
+
         {params.modules}
 
         CHIMERAX=$(command -v chimerax || command -v ChimeraX)
@@ -335,7 +351,6 @@ EOF
 rule project_screen:
     input:
         rules.scatter_predictions.output.done,
-        predictions_dir=rules.scatter_predictions.output.predictions_dir,
     output:
         out_table=f"{PAIR_DIR}/processed_output/projected_icp.tsv",
     log:
@@ -346,10 +361,14 @@ rule project_screen:
         f"{ENV_DIR}/base.yaml"
     params:
         output_dir=f"{PAIR_DIR}/processed_output",
+        predictions_dir=f"{PAIR_DIR}/alphafast_output",
     shell:
         """
+        exec > >(tee {log}) 2>&1
+        set -euo pipefail
+
         python {SCRIPT_DIR}/project_screen.py \
-            --prediction_dir {input.predictions_dir} \
+            --prediction_dir {params.predictions_dir} \
             --output_dir {params.output_dir} \
             --n_cores {threads}
         """

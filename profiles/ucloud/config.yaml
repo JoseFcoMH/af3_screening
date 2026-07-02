@@ -9,6 +9,7 @@ resources:
   - mem_mb=512000
   - cpus_per_task=192
   - uses_gpu=4
+  - api_requests=4
 
 default-resources:
   - runtime=2h
@@ -21,6 +22,12 @@ set-resources:
     mem_mb: 128000
     cpus_per_task: 32
     uses_gpu: 4
+
+  make_baits_from_structure:
+    api_requests: 1
+
+  make_preys:
+    api_requests: 1
 
   map_prediction_to_structure:
     mem_mb: 64000
