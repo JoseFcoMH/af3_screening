@@ -73,19 +73,24 @@ def fetch_uniprot_fasta(accessions):
         logger.warning("No valid UniProt accessions found.")
         return ""
 
-    query = " OR ".join(f"accession_id:{acc}" for acc in valid)
+    batch_size = 50
+    fasta = ""
+    for start in range(0, len(valid), batch_size):
+        valid_batch = valid[start : start + batch_size]
 
-    response = requests.get(
-        "https://rest.uniprot.org/uniprotkb/stream",
-        params={
-            "format": "fasta",
-            "query": query,
-        },
-        timeout=60,
-    )
-    response.raise_for_status()
+        query = " OR ".join(f"accession_id:{acc}" for acc in valid_batch)
 
-    fasta = response.text
+        response = requests.get(
+            "https://rest.uniprot.org/uniprotkb/stream",
+            params={
+                "format": "fasta",
+                "query": query,
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+
+        fasta += response.text
 
     returned = {
         line.split("|")[1]

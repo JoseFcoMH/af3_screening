@@ -79,25 +79,56 @@ def all_requested_predictions(wc):
     ]
 
 
-def jsons_to_predict():
+def jsons_to_predict(wc):
     ckpt = checkpoints.make_missing_jsons.get()
-    preds = glob_wildcards(f"{ckpt.output.json_temp}/{{prediction}}.json").prediction
-    return expand(f"{ckpt.output.json_temp}/{{prediction}}.json", prediction=preds)
+    missing_preds = glob_wildcards(
+        f"{ckpt.output.json_temp}/{{missing_prediction}}.json"
+    ).missing_prediction
+    return expand(
+        f"{ckpt.output.json_temp}/{{missing_prediction}}.json",
+        missing_prediction=missing_preds,
+    )
+
+
+def confidences_to_predict_for_pair(wc):
+    ckpt = checkpoints.make_missing_jsons.get()
+    json_dir = Path(ckpt.output.json_temp)
+
+    pair_manifest = Path(f"{WORK_DIR}/{wc.bait}__{wc.prey}/prediction_manifest.txt")
+
+    pair_predictions = [
+        p.strip() for p in pair_manifest.read_text().splitlines() if p.strip()
+    ]
+
+    missing_predictions = [
+        pred for pred in pair_predictions if (json_dir / f"{pred}.json").is_file()
+    ]
+
+    return expand(
+        f"{PAIR_DIR}/alphafast_output/{{prediction}}/{{prediction}}_confidences.json",
+        bait=[wc.bait],
+        prey=[wc.prey],
+        prediction=missing_predictions,
+    )
+
+
+def missing_predictions(wc):
+    return [f for f in all_requested_predictions(wc) if not Path(f).exists()]
 
 
 rule all:
     input:
-        all_requested_predictions,
+        missing_predictions,
         expand(
             f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.defattr",
-            bait=BAITS_NAMED,
+            bait=[b for b in BAITS_NAMED if BAITS_DICT[b] in STRUCTURE_BAITS],
             prey=PREYS,
         )
         if structs is not None
         else [],
         expand(
             f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.cxs",
-            bait=BAITS_NAMED,
+            bait=[b for b in BAITS_NAMED if BAITS_DICT[b] in STRUCTURE_BAITS],
             prey=PREYS,
         )
         if structs is not None
@@ -130,6 +161,8 @@ if PROTEINLIST_BAITS:
             fasta=f"{PAIR_DIR}/baits.fasta",
         log:
             f"{LOG_DIR}/make_baits_from_proteinlist.log",
+        wildcard_constraints:
+            bait="|".join(Path(b).stem for b in PROTEINLIST_BAITS),
         run:
             copy(input.source, output.accessions)
             accessions = Path(input.source).read_text().splitlines()
@@ -147,6 +180,8 @@ if STRUCTURE_BAITS:
             fasta=f"{PAIR_DIR}/baits.fasta",
         log:
             f"{LOG_DIR}/make_baits_from_structure.log",
+        wildcard_constraints:
+            bait="|".join(Path(b).stem for b in STRUCTURE_BAITS),
         conda:
             f"{ENV_DIR}/base.yaml"
         run:
@@ -202,12 +237,14 @@ checkpoint make_missing_jsons:
         f"{WORK_DIR}/make_missing_jsons.log",
     run:
         requested_predictions = []
+        seen = set()
         for m in input.manifests:
+            pair = Path(m).parent
             for pred in Path(m).read_text().strip().splitlines():
-                if pred not in requested_predictions:
-                    requested_predictions.append(
-                        {"pair": Path(m).parent, "pred": pred}
-                    )
+                key = (pair, pred)
+                if key not in seen:
+                    seen.add(key)
+                    requested_predictions.append({"pair": pair, "pred": pred})
         preys = {}
         baits = {}
         for p in input.all_preys:
@@ -215,7 +252,8 @@ checkpoint make_missing_jsons:
         for b in input.all_baits:
             baits.update(fasta_to_dict(b))
         Path(output.json_temp).mkdir(exist_ok=True)
-        for pair, name in requested_predictions.items():
+        for req_pred in requested_predictions:
+            pair, name = req_pred["pair"], req_pred["pred"]
             if (pair / f"alphafast_output/{name}/{name}_confidences.json").exists():
                 logger.info(f"Skipped pair {pred} (output already exists)")
             else:
@@ -232,7 +270,7 @@ rule run_all_alphafast:
     input:
         jsons_to_predict,
     output:
-        predictions=temp(f"{WORK_DIR}/.predictions_tmp"),
+        predictions=temp(directory(f"{WORK_DIR}/.predictions_tmp")),
     params:
         json_temp=f"{WORK_DIR}/.affast_input",
         modules=modules_for("run_alphafast"),
@@ -274,18 +312,20 @@ rule scatter_predictions:
         temp_dir=rules.run_all_alphafast.output.predictions,
     output:
         done=f"{PAIR_DIR}/alphafast_output/{{prediction}}/{{prediction}}_confidences.json",
-    params:
-        predictions_dir=f"{PAIR_DIR}/alphafast_output/{{prediction}}",
     run:
-        src_dir = Path(input.temp_dir) / wildcards.prediction
-        dst_dir = Path(params.predictions_dir)
-        dst_dir.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(src_dir, dst_dir)
+        if Path(output.done).exists():
+            logger.warning(
+                f"Skipping {output.done} - prediction requested but file already exists"
+            )
+            return
+        src_dir = Path(input.temp_dir) / Path(output.done).parent.name
+        dst_dir = Path(output.done).parent
+        shutil.copytree(src_dir, dst_dir, dirs_exist_ok=True)
 
 
 rule map_prediction_to_structure:
     input:
-        requested_predictions,
+        confidences_to_predict_for_pair,
         cif_structure=lambda wc: BAITS_DICT[wc.bait],
     output:
         attr_file=f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.defattr",
@@ -309,7 +349,7 @@ rule map_prediction_to_structure:
 
 rule get_and_plot_metrics:
     input:
-        requested_predictions,
+        confidences_to_predict_for_pair,
     output:
         metrics_table=f"{PAIR_DIR}/processed_output/screen_metrics.tsv",
         metrics_plot=f"{PAIR_DIR}/processed_output/screen_metrics.html",
@@ -383,7 +423,7 @@ EOF
 
 rule project_screen:
     input:
-        requested_predictions,
+        confidences_to_predict_for_pair,
     output:
         out_table=f"{PAIR_DIR}/processed_output/projected_icp.tsv",
     log:
@@ -423,6 +463,6 @@ rule summarize_all:
     run:
         logger.info(f"Found {len(input.tables)} tables to concatenate.")
         tables = [pl.scan_csv(t, separator="\t") for t in input.tables]
-        summary = pl.concat(tables).sort("ipSAE")
+        summary = pl.concat(tables).sort("ipSAE", descending=True)
         summary.sink_csv(output.summary_table, separator="\t")
         logger.info("Done.")

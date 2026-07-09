@@ -1,12 +1,17 @@
 use-conda: true
 printshellcmds: true
-keep-going: false
+keep-going: true
+keep-incomplete: true
 rerun-incomplete: true
+rerun-triggers:
+  - mtime
+  - params
+  - input
 
 cores: 192
 
 resources:
-  - mem_mb=512000
+  - mem_mb=1024000
   - cpus_per_task=192
   - uses_gpu=4
   - api_requests=4
@@ -15,7 +20,6 @@ default-resources:
   - runtime=2h
   - cpus_per_task=1
   - mem_mb=4096
-  - mem_per_cpu=4096
 
 set-resources:
   run_alphafast:
@@ -24,6 +28,9 @@ set-resources:
     uses_gpu: 4
 
   make_baits_from_structure:
+    api_requests: 1
+
+  make_baits_from_proteinlist:
     api_requests: 1
 
   make_preys:
