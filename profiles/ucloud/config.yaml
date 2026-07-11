@@ -6,7 +6,6 @@ rerun-incomplete: true
 rerun-triggers:
   - mtime
   - params
-  - input
 
 cores: 192
 

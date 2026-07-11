@@ -234,11 +234,18 @@ def main():
         epilog="Hope it works.",
     )
     parser.add_argument(
-        "--af3_dir",
+        "--af3_list",
         required=True,
+        nargs="+",
         type=Path,
-        help="Directory containing the raw AF3 inference output.",
+        help="Confidence jsons from predictions to align",
     )
+    # parser.add_argument(
+    #     "--af3_dir",
+    #     required=True,
+    #     type=Path,
+    #     help="Directory containing the raw AF3 inference output.",
+    # )
     parser.add_argument(
         "--out_file",
         required=True,
@@ -251,19 +258,18 @@ def main():
 
     in_args = parser.parse_args()
 
-    baseDir = in_args.af3_dir
+    # baseDir = in_args.af3_dir
     out_file = in_args.out_file
     cif_file = in_args.cif_file
 
     refSeqs = extract_sequences_from_cif(cif_file)
     cif_name = cif_file.stem
 
-    results = list(baseDir.glob("*"))
+    # results = list(baseDir.glob("*"))
+    results = [r.parent for r in in_args.af3_list]
     results.sort()
 
-    logger.info(
-        f"Found {len(results)} predictions at {baseDir}. Loading and processing..."
-    )
+    logger.info(f"Found {len(results)} predictions. Loading and processing...")
     af3_pairs = [
         af3_pair(pair).load_chains().map_interactor(refSeqs, n_cpus).calc_attr()
         for pair in results
