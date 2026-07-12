@@ -54,9 +54,13 @@ logger.info(f"Got PREYS: {PREYS}")
 logger.info(f"Got BAITS: {BAITS_NAMED}")
 
 
+SCRATCH = config.get("scratch_dir", config["work_dir"] + "/scratch")
+DATABASE = config["predictions_database"]
+
+
 pathvars:
-    database=config["predictions_database"],
-    scratch=config["work_dir"] + "/scratch",
+    database=DATABASE,
+    scratch=SCRATCH,
     logs=config["work_dir"] + "/logs",
 
 
@@ -65,9 +69,13 @@ def modules_for(rule_name):
     return "" if not mods else "module load " + " ".join(mods)
 
 
+def read_manifest(bait, prey):
+    manifest_path = checkpoints.make_manifest.get(bait=bait, prey=prey).output.manifest
+    return Path(manifest_path).read_text().strip().splitlines()
+
+
 def confidences_for_pair(wc):
-    ckpt = checkpoints.make_manifest.get(bait=wc.bait, prey=wc.prey)
-    predictions = Path(ckpt.output.manifest).read_text().strip().splitlines()
+    predictions = read_manifest(bait=wc.bait, prey=wc.prey)
     return expand(
         "<scratch>/prediction_data/{prediction}/{prediction}_confidences.json",
         prediction=predictions,
@@ -75,8 +83,7 @@ def confidences_for_pair(wc):
 
 
 def models_for_pair(wc):
-    ckpt = checkpoints.make_manifest.get(bait=wc.bait, prey=wc.prey)
-    predictions = Path(ckpt.output.manifest).read_text().strip().splitlines()
+    predictions = read_manifest(bait=wc.bait, prey=wc.prey)
     return expand(
         "<scratch>/prediction_data/{prediction}/{prediction}_model.cif",
         prediction=predictions,
@@ -84,30 +91,25 @@ def models_for_pair(wc):
 
 
 def predictions_for_pair(bait, prey):
-    ckpt = checkpoints.make_manifest.get(bait=bait, prey=prey)
-    predictions = Path(ckpt.output.manifest).read_text().strip().splitlines()
+    predictions = read_manifest(bait=bait, prey=prey)
     return expand(
         "<database>/{prediction}.tar.zst",
         prediction=predictions,
     )
 
 
-def alphafast_prediction(wc):
-    predictions_dir = checkpoints.run_all_alphafast.get().output.predictions
-    return directory(f"{predictions_dir}/{wc.prediction}")
-
-
-def all_alphafast_predictions():
-    predictions_dir = checkpoints.run_all_alphafast.get().output.predictions
-    preds = glob_wildcards(
-        f"{predictions_dir}/{prediction}/{prediction}_confidences.json"
-    ).prediction
-    return expand("<database>/{pred}.tar.zst", pred=preds)
+def all_predictions(wc):
+    preds = []
+    for bait in BAITS_NAMED:
+        for prey in PREYS:
+            pred_names = read_manifest(bait=bait, prey=prey)
+            preds.extend([f"{DATABASE}/{n}.tar.zst" for n in pred_names])
+    return list(set(preds))
 
 
 rule all:
     input:
-        [predictions_for_pair(bait, prey) for bait in BAITS for prey in PREYS],
+        all_predictions,
         expand(
             f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.defattr",
             bait=[b for b in BAITS_NAMED if BAITS_DICT[b] in STRUCTURE_BAITS],
@@ -149,7 +151,7 @@ if PROTEINLIST_BAITS:
             accessions=f"{PAIR_DIR}/baits_accessions.txt",
             fasta=f"{PAIR_DIR}/baits.fasta",
         log:
-            f"<logs>/make_baits_from_proteinlist/{PAIR_DIR}",
+            f"<logs>/make_baits_from_proteinlist/{Path(PAIR_DIR).name}",
         wildcard_constraints:
             bait="|".join(Path(b).stem for b in PROTEINLIST_BAITS),
         run:
@@ -168,7 +170,7 @@ if STRUCTURE_BAITS:
             accessions=f"{PAIR_DIR}/baits_accessions.txt",
             fasta=f"{PAIR_DIR}/baits.fasta",
         log:
-            f"<logs>/make_baits_from_structure/{PAIR_DIR}.log",
+            f"<logs>/make_baits_from_structure/{Path(PAIR_DIR).name}.log",
         wildcard_constraints:
             bait="|".join(Path(b).stem for b in STRUCTURE_BAITS),
         conda:
@@ -184,7 +186,7 @@ rule make_preys:
     output:
         preys_fasta=f"{PAIR_DIR}/prey.fasta",
     log:
-        f"<logs>/make_preys/{PAIR_DIR}.log",
+        f"<logs>/make_preys/{Path(PAIR_DIR).name}.log",
     run:
         with open(output.preys_fasta, "w") as f:
             f.write(fetch_uniprot_fasta([wildcards.prey]))
@@ -198,7 +200,7 @@ checkpoint make_manifest:
         manifest=f"{PAIR_DIR}/prediction_manifest.txt",
     params:
         max_len=config.get("total_max_res", 2549),
-        database="<database>",
+        database=DATABASE,
     run:
         prey_name, prey_seq = next(iter(fasta_to_dict(input.prey_fasta).items()))
         baits = fasta_to_dict(input.baits_fasta)
@@ -257,7 +259,7 @@ rule make_missing_jsons:
                 path.write_text(json.dumps(dimer, indent=4))
 
 
-checkpoint run_all_alphafast:
+rule run_all_alphafast:
     input:
         json_temp=rules.make_missing_jsons.output.json_temp,
     output:
@@ -302,7 +304,7 @@ rule get_predictions:
         pred=branch(
             lambda wc: wc.prediction in DB_PREDS,
             before_update("<database>/{prediction}.tar.zst"),
-            alphafast_prediction,
+            rules.run_all_alphafast.output.predictions,
         ),
     output:
         confidences=temp(
@@ -310,9 +312,9 @@ rule get_predictions:
         ),
         model=temp("<scratch>/prediction_data/{prediction}/{prediction}_model.cif"),
     log:
-        "<logs>/get_predictions.log",
+        "<logs>/get_predictions/{prediction}.log",
     params:
-        out_dir="<scratch>/prediction_data/{prediction}",
+        out_dir=f"{SCRATCH}/prediction_data/{{prediction}}",
     shell:
         """
         exec > >(tee {log}) 2>&1
@@ -322,11 +324,11 @@ rule get_predictions:
             tar --extract --zstd \
                 --file {input.pred:q} \
                 --directory {params.out_dir:q} \
-                ./{wildcards.predicion}_confidences.json \
-                ./{wildcards.predicion}_model.cif
+                ./{wildcards.prediction}_confidences.json \
+                ./{wildcards.prediction}_model.cif
         else
-            cp {input.pred:q}/{wildcards.prediction}_confidences.json {params.out_dir:q}/ \
-                && cp {input.pred:q}/{wildcards.prediction}_model.cif {params.out_dir:q}/
+            cp {input.pred:q}/{wildcards.prediction}/{wildcards.prediction}_confidences.json {params.out_dir:q}/ \
+                && cp {input.pred:q}/{wildcards.prediction}/{wildcards.prediction}_model.cif {params.out_dir:q}/
         fi
         """
 
@@ -336,7 +338,7 @@ rule archive_predictions:
         pred=branch(
             lambda wc: wc.prediction in DB_PREDS,
             [],
-            alphafast_prediction,
+            rules.run_all_alphafast.output.predictions,
         ),
     output:
         archive=update("<database>/{prediction}.tar.zst"),
@@ -354,19 +356,19 @@ rule archive_predictions:
             zst_NBTHREADS={threads} \
             tar --create --zstd \
             --file {output.archive:q} \
-            --directory {input.pred:q} \
+            --directory {input.pred:q}/{wildcards.prediction} \
             .
         """
 
 
 rule map_prediction_to_structure:
     input:
-        confidences_for_pair,
+        confs=confidences_for_pair,
         cif_structure=lambda wc: BAITS_DICT[wc.bait],
     output:
         attr_file=f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.defattr",
     log:
-        f"<logs>/map_prediction_to_structure/{PAIR_DIR}.log",
+        f"<logs>/map_prediction_to_structure/{Path(PAIR_DIR).name}.log",
     conda:
         f"{ENV_DIR}/base.yaml"
     shell:
@@ -375,7 +377,7 @@ rule map_prediction_to_structure:
         set -euo pipefail
 
         python {SCRIPT_DIR}/AF3screenToStructure.py \
-            --af3_list {input.confidences_for_pair} \
+            --af3_list {input.confs} \
             --out_file {output.attr_file} \
             --cif_file {input.cif_structure}
         """
@@ -383,19 +385,19 @@ rule map_prediction_to_structure:
 
 rule get_and_plot_metrics:
     input:
-        confidences_for_pair,
-        models_for_pair,
+        confs=confidences_for_pair,
+        models=models_for_pair,
     output:
         metrics_table=f"{PAIR_DIR}/processed_output/screen_metrics.tsv",
         metrics_plot=f"{PAIR_DIR}/processed_output/screen_metrics.html",
     log:
-        f"<logs>/get_and_plot_metrics/{PAIR_DIR}.log",
+        f"<logs>/get_and_plot_metrics/{Path(PAIR_DIR).name}.log",
     group:
         "stats"
     conda:
         f"{ENV_DIR}/base.yaml"
     params:
-        predictions_dir="<scratch>/prediction_data",
+        predictions_dir=f"{SCRATCH}/prediction_data",
         ipsae_dir=f"{PAIR_DIR}/ipSAE",
         out_dir=f"{PAIR_DIR}/processed_output",
     shell:
@@ -405,20 +407,20 @@ rule get_and_plot_metrics:
 
         mkdir -p {params.ipsae_dir:q}
 
-        cifs=({input.models_for_pair:q})
-        confs=({input.confidences_for_pair:q})
+        printf '%s\0' {input.models:q} \
+            | xargs -0 -r -n1 -P {threads} bash -c '
+                ipsae_script="$1"
+                model="$2"
 
-        for i in "${{!cifs[@]}}"; do
-            echo "Calculating metrics for ${{pair}}"
-            pair_name=$(basename $pair)
-            jpair=${{pair}}/${{pair_name}}_confidences.json
-            model="${{cifs[i]}}"
-            jpair="${{confs[i]}}"
+                pair_dir=$(dirname "$model")
+                pair_name=$(basename "$pair_dir")
+                jpair="$pair_dir/${{pair_name}}_confidences.json"
 
-            python {SCRIPT_DIR}/ipsae.py $jpair $model 10 10
-        done
+                echo "Calculating metrics for $pair_name"
+                python "$ipsae_script" "$jpair" "$model" 10 10
+            ' _ "{SCRIPT_DIR}/ipsae.py"
 
-        mv {params.prediction_data}/*/*10_10* {params.ipsae_dir:q}/
+        mv {params.predictions_dir:q}/*/*10_10* {params.ipsae_dir:q}/
 
         python {SCRIPT_DIR}/ipsae_viz_af3.py \
             --ipsae_dir {params.ipsae_dir:q} \
@@ -435,7 +437,7 @@ rule apply_defattr:
     output:
         cxs=f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.cxs",
     log:
-        f"<logs>/apply_defattr/{PAIR_DIR}.log",
+        f"<logs>/apply_defattr/{Path(PAIR_DIR).name}.log",
     params:
         modules=modules_for("apply_defattr"),
         attribute_name=lambda wc: f"{wc.bait}_{wc.prey}",
@@ -464,7 +466,7 @@ rule project_screen:
     output:
         out_table=f"{PAIR_DIR}/processed_output/projected_icp.tsv",
     log:
-        f"<logs>/project_screen/{PAIR_DIR}.log",
+        f"<logs>/project_screen/{Path(PAIR_DIR).name}.log",
     group:
         "stats"
     conda:
