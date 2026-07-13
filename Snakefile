@@ -48,10 +48,12 @@ PREYS = Path(config.get("proteins_screened")).read_text().strip().splitlines()
 WORK_DIR = config.get("work_dir")
 
 PAIR_DIR = f"{WORK_DIR}/{{bait}}__{{prey}}"
-BATCH_DIR = f"{WORK_DIR}/.alphafast_batch"
 
 logger.info(f"Got PREYS: {PREYS}")
 logger.info(f"Got BAITS: {BAITS_NAMED}")
+logger.info(
+    f"Archived predictions in database (showing first 10, out of {len(DB_PATHS)}): {DB_PATHS[:10]}"
+)
 
 
 SCRATCH = config.get("scratch_dir", config["work_dir"] + "/scratch")
@@ -86,6 +88,14 @@ def models_for_pair(wc):
     predictions = read_manifest(bait=wc.bait, prey=wc.prey)
     return expand(
         "<scratch>/prediction_data/{prediction}/{prediction}_model.cif",
+        prediction=predictions,
+    )
+
+
+def summaries_for_pair(wc):
+    predictions = read_manifest(bait=wc.bait, prey=wc.prey)
+    return expand(
+        "<scratch>/prediction_data/{prediction}/{prediction}_summary_confidences.json",
         prediction=predictions,
     )
 
@@ -151,7 +161,7 @@ if PROTEINLIST_BAITS:
             accessions=f"{PAIR_DIR}/baits_accessions.txt",
             fasta=f"{PAIR_DIR}/baits.fasta",
         log:
-            f"<logs>/make_baits_from_proteinlist/{Path(PAIR_DIR).name}",
+            f"<logs>/make_baits_from_proteinlist/{Path(PAIR_DIR).name}.log",
         wildcard_constraints:
             bait="|".join(Path(b).stem for b in PROTEINLIST_BAITS),
         run:
@@ -310,13 +320,16 @@ rule get_predictions:
         confidences=temp(
             "<scratch>/prediction_data/{prediction}/{prediction}_confidences.json"
         ),
+        summary_confidences=temp(
+            "<scratch>/prediction_data/{prediction}/{prediction}_summary_confidences.json"
+        ),
         model=temp("<scratch>/prediction_data/{prediction}/{prediction}_model.cif"),
     log:
         "<logs>/get_predictions/{prediction}.log",
     params:
         out_dir=f"{SCRATCH}/prediction_data/{{prediction}}",
     shell:
-        """
+        r"""
         exec > >(tee {log}) 2>&1
         set -euo pipefail
 
@@ -325,10 +338,12 @@ rule get_predictions:
                 --file {input.pred:q} \
                 --directory {params.out_dir:q} \
                 ./{wildcards.prediction}_confidences.json \
-                ./{wildcards.prediction}_model.cif
+                ./{wildcards.prediction}_model.cif \
+                ./{wildcards.prediction}_summary_confidences.json
         else
             cp {input.pred:q}/{wildcards.prediction}/{wildcards.prediction}_confidences.json {params.out_dir:q}/ \
-                && cp {input.pred:q}/{wildcards.prediction}/{wildcards.prediction}_model.cif {params.out_dir:q}/
+                && cp {input.pred:q}/{wildcards.prediction}/{wildcards.prediction}_model.cif {params.out_dir:q}/ \
+                && cp {input.pred:q}/{wildcards.prediction}/{wildcards.prediction}_summary_confidences.json {params.out_dir:q}/
         fi
         """
 
@@ -343,9 +358,11 @@ rule archive_predictions:
     output:
         archive=update("<database>/{prediction}.tar.zst"),
     shell:
-        """
+        r"""
         exec > >(tee {log}) 2>&1
         set -euo pipefail
+
+        echo "Archiving {input.pred:q}/{wildcards.prediction} as {output.archive:q}"
 
         if [[ -e {output.archive:q} ]]; then
             echo "Archiving requested for {output.archive:q}, skipping as archive already exists"
@@ -372,7 +389,7 @@ rule map_prediction_to_structure:
     conda:
         f"{ENV_DIR}/base.yaml"
     shell:
-        """
+        r"""
         exec > >(tee {log}) 2>&1
         set -euo pipefail
 
@@ -387,6 +404,7 @@ rule get_and_plot_metrics:
     input:
         confs=confidences_for_pair,
         models=models_for_pair,
+        summaries=summaries_for_pair,
     output:
         metrics_table=f"{PAIR_DIR}/processed_output/screen_metrics.tsv",
         metrics_plot=f"{PAIR_DIR}/processed_output/screen_metrics.html",
@@ -394,6 +412,8 @@ rule get_and_plot_metrics:
         f"<logs>/get_and_plot_metrics/{Path(PAIR_DIR).name}.log",
     group:
         "stats"
+    shadow:
+        "minimal"
     conda:
         f"{ENV_DIR}/base.yaml"
     params:
@@ -401,14 +421,14 @@ rule get_and_plot_metrics:
         ipsae_dir=f"{PAIR_DIR}/ipSAE",
         out_dir=f"{PAIR_DIR}/processed_output",
     shell:
-        """
+        r"""
         exec > >(tee {log}) 2>&1
         set -euo pipefail
 
         mkdir -p {params.ipsae_dir:q}
 
         printf '%s\0' {input.models:q} \
-            | xargs -0 -r -n1 -P {threads} bash -c '
+            | xargs -0 -r -n 1 -P {threads} bash -c '
                 ipsae_script="$1"
                 model="$2"
 
@@ -420,7 +440,7 @@ rule get_and_plot_metrics:
                 python "$ipsae_script" "$jpair" "$model" 10 10
             ' _ "{SCRIPT_DIR}/ipsae.py"
 
-        mv {params.predictions_dir:q}/*/*10_10* {params.ipsae_dir:q}/
+        cp {params.predictions_dir:q}/*/*10_10* {params.ipsae_dir:q}/
 
         python {SCRIPT_DIR}/ipsae_viz_af3.py \
             --ipsae_dir {params.ipsae_dir:q} \
@@ -442,7 +462,7 @@ rule apply_defattr:
         modules=modules_for("apply_defattr"),
         attribute_name=lambda wc: f"{wc.bait}_{wc.prey}",
     shell:
-        """
+        r"""
         exec > >(tee {log}) 2>&1
         set -euo pipefail
 
@@ -473,14 +493,16 @@ rule project_screen:
         f"{ENV_DIR}/base.yaml"
     params:
         output_dir=f"{PAIR_DIR}/processed_output",
+        prey=lambda wc: wc.prey,
     shell:
-        """
+        r"""
         exec > >(tee {log}) 2>&1
         set -euo pipefail
 
         python {SCRIPT_DIR}/project_screen.py \
-            --prediction_list {input.confs} \
+            --predictions_list {input.confs} \
             --output_dir {params.output_dir} \
+            --prey {params.prey} \
             --n_cores {threads}
         """
 

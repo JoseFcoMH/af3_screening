@@ -9,6 +9,7 @@ import polars as pl
 import logging
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
+from itertools import repeat
 
 logging.basicConfig(level=logging.INFO)
 
@@ -18,20 +19,24 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DimerPrediction:
     prediction: Path
+    reference_chain: str
 
     def __post_init__(self):
         with open(self.prediction / f"{self.name}_confidences.json") as f:
             data = json.load(f)
+            probs = np.array(data["contact_probs"])
             self.chain_length = {
                 "A": sum(t == "A" for t in data["token_chain_ids"]),
                 "B": sum(t == "B" for t in data["token_chain_ids"]),
             }
-            probs = np.array(data["contact_probs"])
+            self.project_on = (
+                "A" if self.name.split("__")[0] == self.reference_chain else "B"
+            )
             interface1 = probs[: self.chain_length["A"], self.chain_length["A"] :].max(
-                1
+                1 if self.project_on == "A" else 0
             )
             interface2 = probs[self.chain_length["A"] :, : self.chain_length["A"]].max(
-                0
+                0 if self.project_on == "A" else 1
             )
             self.icp = np.stack([interface1, interface2]).max(0)
 
@@ -46,19 +51,23 @@ class DimerPrediction:
 
     @property
     def icp_table(self) -> pl.DataFrame:
-        len_a = self.chain_length["A"]
+        len_projection = (
+            self.chain_length["A"] if self.project_on == "A" else self.chain_length["B"]
+        )
+
         return pl.DataFrame(
             {
-                "residue": list(range(1, len_a + 1)),
+                "residue": list(range(1, len_projection + 1)),
                 "icp": self.icp,
-                "name_A": [self.names["A"]] * len_a,
-                "name_B": [self.names["B"]] * len_a,
+                "name_A": self.names["A"],
+                "name_B": self.names["B"],
+                "project_on": self.project_on,
             }
         )
 
 
-def load_prediction(prediction: Path) -> pl.DataFrame:
-    return DimerPrediction(prediction).icp_table
+def load_prediction(prediction: Path, project_on: str) -> pl.DataFrame:
+    return DimerPrediction(prediction, reference_chain=project_on).icp_table
 
 
 def find_predictions(prediction_dir: Path) -> list[Path]:
@@ -90,8 +99,8 @@ def make_chart(data: pl.DataFrame) -> alt.FacetChart:
 
     points = (
         alt.Chart(data)
-        .transform_filter("datum.icp > 0.4")
-        .mark_point(size=40)
+        .transform_filter("datum.icp > 0.6")
+        .mark_point(size=30)
         .encode(
             x="residue:Q",
             y="icp:Q",
@@ -123,22 +132,24 @@ def main():
     # parser.add_argument("--prediction_dir", type=Path)
     parser.add_argument("--predictions_list", nargs="+", type=Path)
     parser.add_argument("--output_dir", type=Path)
+    parser.add_argument("--prey", type=str)
     parser.add_argument("--n_cores", type=int, default=1)
 
     args = parser.parse_args()
     # prediction_dir = args.prediction_dir
     output_dir = args.output_dir
+    prey = args.prey
 
     out_table = output_dir / "projected_icp.tsv"
     out_html = output_dir / "projected_icp.html"
     out_png = output_dir / "projected_icp.png"
 
     # predictions = find_predictions(prediction_dir)
-    predictions = args.predictions_list
+    predictions = [Path(p).parent for p in args.predictions_list]
 
     logger.info("Started processing predictions.")
     with ProcessPoolExecutor(args.n_cores) as executor:
-        results = list(executor.map(load_prediction, predictions))
+        results = list(executor.map(load_prediction, predictions, repeat(prey)))
     results_table = pl.concat(results)
     results_table.write_csv(out_table, separator="\t")
 

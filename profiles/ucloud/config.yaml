@@ -44,10 +44,13 @@ set-resources:
     cpus_per_task: 2
 
   project_screen:
-    cpus_per_task: 2
+    cpus_per_task: 4
+
+
+
 
 set-threads:
   run_alphafast: 32
   map_prediction_to_structure: 32
-  get_and_plot_metrics: 2
+  get_and_plot_metrics: 4
   project_screen: 2
