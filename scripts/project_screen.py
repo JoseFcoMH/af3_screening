@@ -56,6 +56,7 @@ class DimerPrediction:
             {
                 "residue": list(range(1, len_projection + 1)),
                 "icp": self.icp,
+                "pair": self.name,
                 "name_A": self.names["A"],
                 "name_B": self.names["B"],
                 "project_on": self.project_on,
@@ -77,6 +78,18 @@ def load_prediction(prediction: Path, project_on: str) -> pl.DataFrame:
 
 
 def make_chart(data: pl.DataFrame) -> alt.FacetChart:
+    data = data.with_columns(
+        pl.when(pl.col("project_on") == "A")
+        .then(pl.col("name_B"))
+        .otherwise(pl.col("name_A"))
+        .alias("projected"),
+        pl.col("icp")
+        .max()
+        .over("pair")
+        .rank(method="dense", descending=True)
+        .alias("pair_rank"),
+    ).filter(pl.col("pair_rank").lt(13))
+
     line = (
         alt.Chart(data)
         .mark_line()
@@ -87,7 +100,7 @@ def make_chart(data: pl.DataFrame) -> alt.FacetChart:
                 title="Contact probability",
                 scale=alt.Scale(domain=[0, 1]),
             ),
-            color=alt.Color("name_B:N", title="Interactor"),
+            color=alt.Color("projected:N", title="Interactor"),
         )
     )
 
@@ -98,9 +111,9 @@ def make_chart(data: pl.DataFrame) -> alt.FacetChart:
         .encode(
             x="residue:Q",
             y="icp:Q",
-            color="name_B:N",
+            color="projected:N",
             tooltip=[
-                alt.Tooltip("name_B:N", title="Interactor"),
+                alt.Tooltip("projected:N", title="Interactor"),
                 alt.Tooltip("residue:Q", title="Residue"),
                 alt.Tooltip("icp:Q", title="Contact probability", format=".2f"),
             ],
@@ -122,14 +135,12 @@ def main():
 
     parser = argparse.ArgumentParser()
 
-    # parser.add_argument("--prediction_dir", type=Path)
     parser.add_argument("--predictions_list", nargs="+", type=Path)
     parser.add_argument("--output_dir", type=Path)
     parser.add_argument("--prey", type=str)
     parser.add_argument("--n_cores", type=int, default=1)
 
     args = parser.parse_args()
-    # prediction_dir = args.prediction_dir
     output_dir = args.output_dir
     prey = args.prey
 
@@ -148,7 +159,7 @@ def main():
 
     logger.info(f"Done. Saved results as {out_table}. Started plotting.")
 
-    hit_genes = results_table.filter(pl.col("icp").gt(0.6)).unique(["name_A", "name_B"])
+    hit_genes = results_table.filter(pl.col("icp").gt(0.4)).unique(["name_A", "name_B"])
     filtered_data = results_table.join(hit_genes, on=["name_A", "name_B"], how="semi")
 
     if len(filtered_data) == 0:

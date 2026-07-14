@@ -140,11 +140,6 @@ rule all:
             prey=PREYS,
         ),
         expand(
-            f"{PAIR_DIR}/processed_output/screen_metrics.html",
-            bait=BAITS_NAMED,
-            prey=PREYS,
-        ),
-        expand(
             f"{PAIR_DIR}/processed_output/projected_icp.tsv",
             bait=BAITS_NAMED,
             prey=PREYS,
@@ -409,7 +404,6 @@ rule get_and_plot_metrics:
         summaries=summaries_for_pair,
     output:
         metrics_table=f"{PAIR_DIR}/processed_output/screen_metrics.tsv",
-        metrics_plot=f"{PAIR_DIR}/processed_output/screen_metrics.html",
     log:
         f"<logs>/get_and_plot_metrics/{Path(PAIR_DIR).name}.log",
     group:
