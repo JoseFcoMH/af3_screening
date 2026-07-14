@@ -65,8 +65,8 @@ class AlignableDimer(DimerPrediction):
 
     @property
     def interactor(self):
-        prots = self.name.split("__")
-        return prots[np.argmax(np.array(prots) != self.reference_chain)]
+        prots = np.array([p.split("_")[0] for p in self.name.split("__")])
+        return prots[np.argmax(prots != self.reference_chain)]
 
     @property
     def structure(self) -> Path:
@@ -216,21 +216,18 @@ def main():
     logger.info(
         f"Done. Got {len(af3_pairs)} complexes, {sum(pair.best_seq is not None for pair in af3_pairs)} of which mapped to a chain in {cif_name}. Creating attribute file..."
     )
+    mapped_pairs = [p for p in af3_pairs if p.match_id is not None]
 
     best_dict = {
-        chain: ChainMapping() for chain in set([x.match_id for x in af3_pairs])
+        chain: ChainMapping() for chain in set([x.match_id for x in mapped_pairs])
     }
-    for pair in af3_pairs:
+    for pair in mapped_pairs:
         if pair.best_score > best_dict[pair.match_id].best_score:
             best_dict[pair.match_id] = ChainMapping(
                 pair.interactor,
                 pair.best_score,
                 pair,
             )
-
-    assert len(set(best_dict.keys())) == len(
-        set([x.interactor for x in best_dict.values()])
-    )
 
     best_pairs = [
         x.aligned_pair for x in best_dict.values() if x.aligned_pair is not None

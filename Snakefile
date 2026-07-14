@@ -252,16 +252,13 @@ rule make_missing_jsons:
         Path(output.json_temp).mkdir(exist_ok=True)
         for req_pred in requested_predictions:
             pair, name = req_pred["pair"], req_pred["pred"]
-            if (pair / f"alphafast_output/{name}/{name}_confidences.json").exists():
-                logger.info(f"Skipped pair {pred} (output already exists)")
-            else:
-                p1, p2 = name.split("__")
-                dimer = dimer_template.copy()
-                dimer["name"] = name
-                dimer["sequences"][0]["protein"]["sequence"] = prots[p1]
-                dimer["sequences"][1]["protein"]["sequence"] = prots[p2]
-                path = Path(output.json_temp) / f"{name}.json"
-                path.write_text(json.dumps(dimer, indent=4))
+            p1, p2 = name.split("__")
+            dimer = dimer_template.copy()
+            dimer["name"] = name
+            dimer["sequences"][0]["protein"]["sequence"] = prots[p1]
+            dimer["sequences"][1]["protein"]["sequence"] = prots[p2]
+            path = Path(output.json_temp) / f"{name}.json"
+            path.write_text(json.dumps(dimer, indent=4))
 
 
 rule run_all_alphafast:

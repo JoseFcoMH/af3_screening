@@ -113,6 +113,10 @@ def fetch_uniprot_fasta(accessions):
 def fasta_to_dict(fasta_path: Path | str) -> dict[str, str]:
     fastas = Path(fasta_path).read_text().strip().splitlines()
     d = {}
+
+    if len(fastas) < 2:
+        logger.warning(f"Fasta at {fasta_path} has no valid records: \n{fastas}")
+
     uniprot, name = "", ""
     for line in fastas:
         if line.startswith(">"):
