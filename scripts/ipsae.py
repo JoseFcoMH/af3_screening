@@ -29,8 +29,11 @@
 #
 # All output files will be in same path/folder as cif or pdb file
 
-import sys, os, math
+import sys
+import os
+import math
 import json
+from pathlib import Path
 import numpy as np
 
 np.set_printoptions(
@@ -74,6 +77,7 @@ pae_file_path = sys.argv[1]
 pdb_path = sys.argv[2]
 pae_cutoff = float(sys.argv[3])
 dist_cutoff = float(sys.argv[4])
+out_dir = sys.argv[5]
 pae_string = str(int(pae_cutoff))
 if pae_cutoff < 10:
     pae_string = "0" + pae_string
@@ -117,9 +121,11 @@ else:
     print("Wrong PDB or PAE file type ", pdb_path)
     sys.exit()
 
-file_path = path_stem + ".txt"
-file2_path = path_stem + "_byres.txt"
-pml_path = path_stem + ".pml"
+out_path_stem = Path(path_stem).stem
+out_path = Path(out_dir)
+file_path = str(out_path / f"{out_path_stem}.txt")
+file2_path = str(out_path / f"{out_path_stem}_byres.txt")
+pml_path = str(out_path / f"{path_stem}.pml")
 OUT = open(file_path, "w")
 PML = open(pml_path, "w")
 OUT2 = open(file2_path, "w")
@@ -375,7 +381,9 @@ residues = []
 cb_residues = []
 chains = []
 atomsitefield_num = 0
-atomsitefield_dict = {}  # contains order of atom_site fields in mmCIF files; handles any mmCIF field order
+atomsitefield_dict = (
+    {}
+)  # contains order of atom_site fields in mmCIF files; handles any mmCIF field order
 
 # For af3 and boltz: need mask to identify CA atom tokens in plddt vector and pae matrix;
 # Skip ligand atom tokens and non-CA-atom tokens in PTMs (those not in residue_set)
@@ -417,7 +425,7 @@ with open(pdb_path, "r") as PDB:
     for line in PDB:
         if line.startswith("_atom_site."):
             line = line.strip()
-            (atomsite, fieldname) = line.split(".")
+            atomsite, fieldname = line.split(".")
             atomsitefield_dict[fieldname] = atomsitefield_num
             atomsitefield_num += 1
             continue
@@ -1100,7 +1108,7 @@ PML.write(
     "# Chn1 Chn2  PAE Dist  Type   ipSAE    ipSAE_d0chn ipSAE_d0dom  ipTM_af  ipTM_d0chn     pDockQ     pDockQ2    LIS      n0res  n0chn  n0dom   d0res   d0chn   d0dom  nres1   nres2   dist1   dist2  Model\n"
 )
 for pair in sorted(chainpairs):
-    (chain_a, chain_b) = pair.split("-")
+    chain_a, chain_b = pair.split("-")
     pair1 = (chain_a, chain_b)
     pair2 = (chain_b, chain_a)
     for pair in (pair1, pair2):
@@ -1216,4 +1224,3 @@ for pair in sorted(chainpairs):
             f"alias {chain_pair}, color gray80, all; color {color1}, {chain1_residues}; color {color2}, {chain2_residues}\n\n"
         )
     OUT.write("\n")
-
