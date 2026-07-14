@@ -7,7 +7,6 @@ from Bio.SeqRecord import SeqRecord
 from Bio.Align import PairwiseAligner
 
 import json
-import os
 from concurrent.futures import ProcessPoolExecutor
 import argparse
 from pathlib import Path
@@ -49,7 +48,6 @@ class af3_pair:
         self.iptms = []
         self.ptms = []
         self.chains = []
-        self.confidences = None
         self.iCP = None
         self.best_score = -np.inf
         self.best_seq = None
@@ -114,16 +112,16 @@ class af3_pair:
         with open(
             Path(self.pred_dir) / f"{Path(self.pred_dir).stem}_confidences.json", "r"
         ) as f:
-            self.confidences = json.load(f)
+            confidences = json.load(f)
             chain_len = {
-                chain: self.confidences["token_chain_ids"].count(chain)
+                chain: confidences["token_chain_ids"].count(chain)
                 for chain in ["A", "B"]
             }
             contact_probs = (
-                np.array(self.confidences["contact_probs"])[
+                np.array(confidences["contact_probs"])[
                     chain_len["A"] :, : chain_len["A"]
                 ]
-                + np.array(self.confidences["contact_probs"])[
+                + np.array(confidences["contact_probs"])[
                     : chain_len["A"], chain_len["A"] :
                 ].T
             ) / 2
@@ -218,16 +216,6 @@ class af3_pair:
 
 def main():
 
-    n_cpus = (
-        int(os.environ.get("SLURM_CPUS_ON_NODE", 0))
-        or int(os.environ.get("SLURM_CPUS_PER_TASK", 0))
-        or int(os.environ.get("PBS_NUM_PPN", 0))
-        or os.cpu_count()  # fallback to all available CPUs and hope for the best
-        or 1
-    )
-
-    logger.info(f"Using {n_cpus} CPUs.")
-
     parser = argparse.ArgumentParser(
         prog="Process AF3 inference.",
         description="Problems? Ask Jose.",
@@ -240,12 +228,6 @@ def main():
         type=Path,
         help="Confidence jsons from predictions to align",
     )
-    # parser.add_argument(
-    #     "--af3_dir",
-    #     required=True,
-    #     type=Path,
-    #     help="Directory containing the raw AF3 inference output.",
-    # )
     parser.add_argument(
         "--out_file",
         required=True,
@@ -255,17 +237,21 @@ def main():
     parser.add_argument(
         "--cif_file", required=True, type=Path, help="Full path to .cif file to paint."
     )
+    parser.add_argument(
+        "--n_cpus", required=False, type=int, default=1, help="N cores to use"
+    )
 
     in_args = parser.parse_args()
 
-    # baseDir = in_args.af3_dir
+    n_cpus = in_args.n_cpus
+    logger.info(f"Using {n_cpus} CPUs.")
+
     out_file = in_args.out_file
     cif_file = in_args.cif_file
 
     refSeqs = extract_sequences_from_cif(cif_file)
     cif_name = cif_file.stem
 
-    # results = list(baseDir.glob("*"))
     results = [r.parent for r in in_args.af3_list]
     results.sort()
 
@@ -273,7 +259,6 @@ def main():
     af3_pairs = [
         af3_pair(pair).load_chains().map_interactor(refSeqs, n_cpus).calc_attr()
         for pair in results
-        if (pair / f"{pair.name}_ranking_scores.csv").exists()
     ]
 
     assert len(af3_pairs) > 0

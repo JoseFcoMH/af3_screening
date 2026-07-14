@@ -28,6 +28,13 @@ protein_drug_template = {
 }
 
 
+UNIPROT_ACCESSION_RE = re.compile(
+    r"^(?:[OPQ][0-9][A-Z0-9]{3}[0-9]|"
+    r"[A-NR-Z][0-9][A-Z][A-Z0-9]{2}[0-9]"
+    r"(?:-[0-9]+)?)$"
+)
+
+
 def load_smi(smi_path: Path) -> dict[str, str]:
     return {
         line.strip().split(" ")[1]: line.strip().split(" ")[0]
@@ -50,13 +57,6 @@ def get_uniprot_ids_from_struc(cif_file: str) -> list[str]:
     return list({ref_to_uniprot[ref_id] for ref_id in d["_struct_ref_seq.ref_id"]})
 
 
-UNIPROT_ACCESSION_RE = re.compile(
-    r"^(?:[OPQ][0-9][A-Z0-9]{3}[0-9]|"
-    r"[A-NR-Z][0-9][A-Z][A-Z0-9]{2}[0-9]"
-    r"(?:-[0-9]+)?)$"
-)
-
-
 def fetch_uniprot_fasta(accessions):
     accessions = [x.strip() for x in accessions if x.strip()]
 
@@ -73,7 +73,7 @@ def fetch_uniprot_fasta(accessions):
         logger.warning("No valid UniProt accessions found.")
         return ""
 
-    batch_size = 50
+    batch_size = 150
     fasta = ""
     for start in range(0, len(valid), batch_size):
         valid_batch = valid[start : start + batch_size]
@@ -113,6 +113,7 @@ def fetch_uniprot_fasta(accessions):
 def fasta_to_dict(fasta_path: Path | str) -> dict[str, str]:
     fastas = Path(fasta_path).read_text().strip().splitlines()
     d = {}
+    uniprot, name = "", ""
     for line in fastas:
         if line.startswith(">"):
             uniprot = line.split("|")[1]

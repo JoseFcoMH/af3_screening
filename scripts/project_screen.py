@@ -24,28 +24,25 @@ class DimerPrediction:
     def __post_init__(self):
         with open(self.prediction / f"{self.name}_confidences.json") as f:
             data = json.load(f)
-            probs = np.array(data["contact_probs"])
+            self.probs = np.array(data["contact_probs"]).astype(np.float32)
             self.chain_length = {
                 "A": sum(t == "A" for t in data["token_chain_ids"]),
                 "B": sum(t == "B" for t in data["token_chain_ids"]),
             }
             self.project_on = (
-                "A" if self.name.split("__")[0] == self.reference_chain else "B"
+                "A" if self.name.split("_")[0] == self.reference_chain else "B"
             )
-            interface1 = probs[: self.chain_length["A"], self.chain_length["A"] :].max(
-                1 if self.project_on == "A" else 0
+            logging.debug(
+                f"Will project on chain {self.project_on} aka {self.names[self.project_on]}"
             )
-            interface2 = probs[self.chain_length["A"] :, : self.chain_length["A"]].max(
-                0 if self.project_on == "A" else 1
-            )
-            self.icp = np.stack([interface1, interface2]).max(0)
+            self.icp = self.project_icp(self.project_on)
 
     @property
-    def name(self):
+    def name(self) -> str:
         return self.prediction.stem
 
     @property
-    def names(self):
+    def names(self) -> dict[str, str]:
         name_a, name_b = self.name.split("__")
         return {"A": name_a, "B": name_b}
 
@@ -65,21 +62,18 @@ class DimerPrediction:
             }
         )
 
+    def project_icp(self, on="A") -> np.ndarray:
+        interface1 = self.probs[: self.chain_length["A"], self.chain_length["A"] :].max(
+            1 if on == "A" else 0
+        )
+        interface2 = self.probs[self.chain_length["A"] :, : self.chain_length["A"]].max(
+            0 if on == "A" else 1
+        )
+        return np.stack([interface1, interface2]).max(0)
+
 
 def load_prediction(prediction: Path, project_on: str) -> pl.DataFrame:
     return DimerPrediction(prediction, reference_chain=project_on).icp_table
-
-
-def find_predictions(prediction_dir: Path) -> list[Path]:
-    predictions = []
-    logger.info(f"Scanning {prediction_dir}...")
-    for pred in prediction_dir.glob("*"):
-        if len(list(pred.glob("*.cif"))) == 1:
-            predictions.append(pred)
-        else:
-            logger.info(f"Skipped {pred} (no structure found in dir)")
-    logger.info(f"Found {len(predictions)} usable predictions")
-    return predictions
 
 
 def make_chart(data: pl.DataFrame) -> alt.FacetChart:
@@ -120,7 +114,6 @@ def make_chart(data: pl.DataFrame) -> alt.FacetChart:
             width=600,
         )
         .interactive()
-        .facet(row=alt.Row("name_A:N", title="Prey"))
     )
     return chart
 

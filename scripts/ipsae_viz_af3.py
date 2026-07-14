@@ -14,7 +14,7 @@ def load_ipsae(ipsae_dir: Path) -> pl.DataFrame:
     files = ipsae_dir.glob("*10.txt")
     ipsae_raw = []
     for f in files:
-        logger.info(f"On file {f}")
+        logger.debug(f"On file {f}")
         new_df = pl.from_pandas(pd.read_csv(f, sep=r"\s+"))
         if len(new_df) > 0:
             ipsae_raw.append(new_df)

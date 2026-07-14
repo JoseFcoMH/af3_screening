@@ -341,9 +341,9 @@ rule get_predictions:
                 ./{wildcards.prediction}_model.cif \
                 ./{wildcards.prediction}_summary_confidences.json
         else
-            cp {input.pred:q}/{wildcards.prediction}/{wildcards.prediction}_confidences.json {params.out_dir:q}/ \
-                && cp {input.pred:q}/{wildcards.prediction}/{wildcards.prediction}_model.cif {params.out_dir:q}/ \
-                && cp {input.pred:q}/{wildcards.prediction}/{wildcards.prediction}_summary_confidences.json {params.out_dir:q}/
+            ln -s {input.pred:q}/{wildcards.prediction}/{wildcards.prediction}_confidences.json {params.out_dir:q}/{wildcards.prediction}_confidences.json \
+                && ln -s {input.pred:q}/{wildcards.prediction}/{wildcards.prediction}_model.cif {params.out_dir:q}/{wildcards.prediction}_model.cif \
+                && ln -s {input.pred:q}/{wildcards.prediction}/{wildcards.prediction}_summary_confidences.json {params.out_dir:q}/{wildcards.prediction}_summary_confidences.json
         fi
         """
 
@@ -393,10 +393,12 @@ rule map_prediction_to_structure:
         exec > >(tee {log}) 2>&1
         set -euo pipefail
 
-        python {SCRIPT_DIR}/AF3screenToStructure.py \
+        python {SCRIPT_DIR}/project_to_structure.py \
             --af3_list {input.confs} \
             --out_file {output.attr_file} \
-            --cif_file {input.cif_structure}
+            --cif_file {input.cif_structure} \
+            --n_cpus {threads} \
+            --reference_chain {wildcards.prey}
         """
 
 
@@ -412,20 +414,22 @@ rule get_and_plot_metrics:
         f"<logs>/get_and_plot_metrics/{Path(PAIR_DIR).name}.log",
     group:
         "stats"
-    shadow:
-        "minimal"
     conda:
         f"{ENV_DIR}/base.yaml"
     params:
         predictions_dir=f"{SCRATCH}/prediction_data",
         ipsae_dir=f"{PAIR_DIR}/ipSAE",
         out_dir=f"{PAIR_DIR}/processed_output",
+        pair=str(Path(PAIR_DIR).name),
+        n_files=lambda wc, input: len(input.models),
     shell:
         r"""
         exec > >(tee {log}) 2>&1
         set -euo pipefail
 
         mkdir -p {params.ipsae_dir:q}
+
+        echo "Calculating metrics for {params.pair} ({params.n_files} predictions)"
 
         printf '%s\0' {input.models:q} \
             | xargs -0 -r -n 1 -P {threads} bash -c '
@@ -436,11 +440,9 @@ rule get_and_plot_metrics:
                 pair_name=$(basename "$pair_dir")
                 jpair="$pair_dir/${{pair_name}}_confidences.json"
 
-                echo "Calculating metrics for $pair_name"
-                python "$ipsae_script" "$jpair" "$model" 10 10
+                # echo "Calculating metrics for $pair_name"
+                python "$ipsae_script" "$jpair" "$model" 10 10 {params.ipsae_dir:q}
             ' _ "{SCRIPT_DIR}/ipsae.py"
-
-        cp {params.predictions_dir:q}/*/*10_10* {params.ipsae_dir:q}/
 
         python {SCRIPT_DIR}/ipsae_viz_af3.py \
             --ipsae_dir {params.ipsae_dir:q} \
