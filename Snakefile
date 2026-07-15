@@ -516,6 +516,6 @@ rule summarize_all:
     run:
         logger.info(f"Found {len(input.tables)} tables to concatenate.")
         tables = [pl.scan_csv(t, separator="\t") for t in input.tables]
-        summary = pl.concat(tables).sort("ipSAE", descending=True)
+        summary = pl.concat(tables).sort("ipSAE", descending=True).unique("pair")
         summary.sink_csv(output.summary_table, separator="\t")
         logger.info("Done.")
