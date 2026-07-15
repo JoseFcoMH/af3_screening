@@ -73,7 +73,7 @@ def fetch_uniprot_fasta(accessions):
         logger.warning("No valid UniProt accessions found.")
         return ""
 
-    batch_size = 150
+    batch_size = 50
     fasta = ""
     for start in range(0, len(valid), batch_size):
         valid_batch = valid[start : start + batch_size]
