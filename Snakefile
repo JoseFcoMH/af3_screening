@@ -47,9 +47,6 @@ BAITS_NAMED = list(BAITS_DICT.keys())
 
 PREYS = Path(config.get("proteins_screened")).read_text().strip().splitlines()
 
-WORK_DIR = config.get("work_dir")
-
-PAIR_DIR = f"{WORK_DIR}/{{bait}}__{{prey}}"
 
 logger.info(f"Got PREYS: {PREYS}")
 logger.info(f"Got BAITS: {BAITS_NAMED}")
@@ -65,7 +62,12 @@ DATABASE = config["predictions_database"]
 pathvars:
     database=DATABASE,
     scratch=SCRATCH,
-    logs=config["work_dir"] + "/logs",
+    envs=ENV_DIR,
+    work=config.get("work_dir"),
+    logs="<work>/logs",
+    pair_name="{bait}__{prey}",
+    pair_dir="<work>/<pair_name>",
+    pair_output="<pair_dir>/processed_output",
 
 
 def modules_for(rule_name):
@@ -123,30 +125,30 @@ rule all:
     input:
         all_predictions,
         expand(
-            f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.defattr",
+            "<pair_output>/{bait}__{prey}.defattr",
             bait=[b for b in BAITS_NAMED if BAITS_DICT[b] in STRUCTURE_BAITS],
             prey=PREYS,
         )
         if structs is not None
         else [],
         expand(
-            f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.cxs",
+            "<pair_output>/{bait}__{prey}.cxs",
             bait=[b for b in BAITS_NAMED if BAITS_DICT[b] in STRUCTURE_BAITS],
             prey=PREYS,
         )
         if structs is not None
         else [],
         expand(
-            f"{PAIR_DIR}/processed_output/screen_metrics.tsv",
+            "<pair_output>/screen_metrics.tsv",
             bait=BAITS_NAMED,
             prey=PREYS,
         ),
         expand(
-            f"{PAIR_DIR}/processed_output/projected_icp.tsv",
+            "<pair_output>/projected_icp.tsv",
             bait=BAITS_NAMED,
             prey=PREYS,
         ),
-        f"{WORK_DIR}/summary_metrics.tsv",
+        "<work>/summary_metrics.tsv",
 
 
 if PROTEINLIST_BAITS:
@@ -155,10 +157,10 @@ if PROTEINLIST_BAITS:
         input:
             source=lambda wc: BAITS_DICT[wc.bait],
         output:
-            accessions=f"{PAIR_DIR}/baits_accessions.txt",
-            fasta=f"{PAIR_DIR}/baits.fasta",
+            accessions="<pair_dir>/baits_accessions.txt",
+            fasta="<pair_dir>/baits.fasta",
         log:
-            f"<logs>/make_baits_from_proteinlist/{Path(PAIR_DIR).name}.log",
+            "<logs>/make_baits_from_proteinlist/<pair_name>.log",
         wildcard_constraints:
             bait="|".join(Path(b).stem for b in PROTEINLIST_BAITS),
         run:
@@ -176,14 +178,14 @@ if STRUCTURE_BAITS:
         input:
             source=lambda wc: BAITS_DICT[wc.bait],
         output:
-            accessions=f"{PAIR_DIR}/baits_accessions.txt",
-            fasta=f"{PAIR_DIR}/baits.fasta",
+            accessions="<pair_dir>/baits_accessions.txt",
+            fasta="<pair_dir>/baits.fasta",
         log:
-            f"<logs>/make_baits_from_structure/{Path(PAIR_DIR).name}.log",
+            "<logs>/make_baits_from_structure/<pair_name>.log",
         wildcard_constraints:
             bait="|".join(Path(b).stem for b in STRUCTURE_BAITS),
         conda:
-            f"{ENV_DIR}/base.yaml"
+            "<envs>/base.yaml"
         run:
             uni_ids = get_uniprot_ids_from_struc(input.source)
             fasta = fetch_uniprot_fasta(uni_ids, UNIPROT_LOCAL)
@@ -193,9 +195,9 @@ if STRUCTURE_BAITS:
 
 rule make_preys:
     output:
-        preys_fasta=f"{PAIR_DIR}/prey.fasta",
+        preys_fasta="<pair_dir>/prey.fasta",
     log:
-        f"<logs>/make_preys/{Path(PAIR_DIR).name}.log",
+        "<logs>/make_preys/<pair_name>.log",
     run:
         with open(output.preys_fasta, "w") as f:
             f.write(fetch_uniprot_fasta([wildcards.prey], UNIPROT_LOCAL))
@@ -204,9 +206,10 @@ rule make_preys:
 checkpoint make_manifest:
     input:
         prey_fasta=rules.make_preys.output.preys_fasta,
-        baits_fasta=f"{PAIR_DIR}/baits.fasta",
+        baits_fasta="<pair_dir>/baits.fasta",
     output:
-        manifest=f"{PAIR_DIR}/prediction_manifest.txt",
+        manifest="<pair_dir>/prediction_manifest.txt",
+    priority: 10
     params:
         max_len=config.get("total_max_res", 2549),
         database=DATABASE,
@@ -229,15 +232,15 @@ checkpoint make_manifest:
 
 rule make_missing_jsons:
     input:
-        all_baits=expand(f"{PAIR_DIR}/baits.fasta", bait=BAITS_NAMED, prey=PREYS),
-        all_preys=expand(f"{PAIR_DIR}/prey.fasta", bait=BAITS_NAMED, prey=PREYS),
+        all_baits=expand("<pair_dir>/baits.fasta", bait=BAITS_NAMED, prey=PREYS),
+        all_preys=expand("<pair_dir>/prey.fasta", bait=BAITS_NAMED, prey=PREYS),
         manifests=expand(
-            f"{PAIR_DIR}/prediction_manifest.txt", bait=BAITS_NAMED, prey=PREYS
+            "<pair_dir>/prediction_manifest.txt", bait=BAITS_NAMED, prey=PREYS
         ),
     output:
-        json_temp=temp(directory(f"<scratch>/missing_jsons"), group_jobs=True),
+        json_temp=temp(directory("<scratch>/missing_jsons"), group_jobs=True),
     log:
-        f"<logs>/make_missing_jsons.log",
+        "<logs>/make_missing_jsons.log",
     run:
         requested_predictions = []
         seen = set()
@@ -269,7 +272,8 @@ rule run_all_alphafast:
     input:
         json_temp=rules.make_missing_jsons.output.json_temp,
     output:
-        predictions=temp(directory(f"<scratch>/predictions"), group_jobs=True),
+        predictions=temp(directory("<scratch>/predictions"), group_jobs=True),
+    priority: 5
     params:
         modules=modules_for("run_alphafast"),
         af_scriptdir=config["alphafast"]["script_dir"],
@@ -327,6 +331,7 @@ rule get_predictions:
         ),
     log:
         "<logs>/get_predictions/{prediction}.log",
+    priority: -5
     params:
         out_dir=f"{SCRATCH}/prediction_data/{{prediction}}",
     shell:
@@ -358,6 +363,7 @@ rule archive_predictions:
         ),
     output:
         archive=update("<database>/{prediction}.tar.zst"),
+    priority: 5
     shell:
         r"""
         exec > >(tee {log}) 2>&1
@@ -384,11 +390,11 @@ rule map_prediction_to_structure:
         confs=confidences_for_pair,
         cif_structure=lambda wc: BAITS_DICT[wc.bait],
     output:
-        attr_file=f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.defattr",
+        attr_file="<pair_output>/{bait}__{prey}.defattr",
     log:
-        f"<logs>/map_prediction_to_structure/{Path(PAIR_DIR).name}.log",
+        "<logs>/map_prediction_to_structure/<pair_name>.log",
     conda:
-        f"{ENV_DIR}/base.yaml"
+        "<envs>/base.yaml"
     shell:
         r"""
         exec > >(tee {log}) 2>&1
@@ -409,18 +415,17 @@ rule get_and_plot_metrics:
         models=models_for_pair,
         summaries=summaries_for_pair,
     output:
-        metrics_table=f"{PAIR_DIR}/processed_output/screen_metrics.tsv",
+        metrics_table="<pair_output>/screen_metrics.tsv",
     log:
-        f"<logs>/get_and_plot_metrics/{Path(PAIR_DIR).name}.log",
+        "<logs>/get_and_plot_metrics/<pair_name>.log",
     group:
         "stats"
     conda:
-        f"{ENV_DIR}/base.yaml"
+        "<envs>/base.yaml"
     params:
-        predictions_dir=f"{SCRATCH}/prediction_data",
-        ipsae_dir=f"{PAIR_DIR}/ipSAE",
-        out_dir=f"{PAIR_DIR}/processed_output",
-        pair=str(Path(PAIR_DIR).name),
+        ipsae_dir=lambda wc: f"{SCRATCH}/{wc.bait}__{wc.prey}/ipSAE",
+        out_dir=lambda wc, output: str(Path(output.metrics_table).parent),
+        pair="{bait}__{prey}",
         n_files=lambda wc, input: len(input.models),
     shell:
         r"""
@@ -455,14 +460,14 @@ rule get_and_plot_metrics:
 rule apply_defattr:
     input:
         cif=lambda wc: BAITS_DICT[wc.bait],
-        defattr=f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.defattr",
+        defattr="<pair_output>/{bait}__{prey}.defattr",
     output:
-        cxs=f"{PAIR_DIR}/processed_output/{{bait}}__{{prey}}.cxs",
+        cxs="<pair_output>/{bait}__{prey}.cxs",
     log:
-        f"<logs>/apply_defattr/{Path(PAIR_DIR).name}.log",
+        "<logs>/apply_defattr/<pair_name>.log",
     params:
         modules=modules_for("apply_defattr"),
-        attribute_name=lambda wc: f"{wc.bait}_{wc.prey}",
+        attribute_name="{bait}_{prey}",
     shell:
         r"""
         exec > >(tee {log}) 2>&1
@@ -486,15 +491,15 @@ rule project_screen:
     input:
         confs=confidences_for_pair,
     output:
-        out_table=f"{PAIR_DIR}/processed_output/projected_icp.tsv",
+        out_table="<pair_output>/projected_icp.tsv",
     log:
-        f"<logs>/project_screen/{Path(PAIR_DIR).name}.log",
+        "<logs>/project_screen/<pair_name>.log",
     group:
         "stats"
     conda:
-        f"{ENV_DIR}/base.yaml"
+        "<envs>/base.yaml"
     params:
-        output_dir=f"{PAIR_DIR}/processed_output",
+        output_dir=lambda wc, output: str(Path(output).parent),
         prey=lambda wc: wc.prey,
     shell:
         r"""
@@ -512,16 +517,16 @@ rule project_screen:
 rule summarize_all:
     input:
         tables=expand(
-            f"{PAIR_DIR}/processed_output/screen_metrics.tsv",
+            "<pair_output>/screen_metrics.tsv",
             bait=BAITS_NAMED,
             prey=PREYS,
         ),
     output:
-        summary_table=update(f"{WORK_DIR}/summary_metrics.tsv"),
+        summary_table=update("<work>/summary_metrics.tsv"),
     log:
-        f"<logs>/summarize_screens.log",
+        "<logs>/summarize_screens.log",
     conda:
-        f"{ENV_DIR}/base.yaml"
+        "<envs>/base.yaml"
     run:
         logger.info(f"Found {len(input.tables)} tables to concatenate.")
         tables = [pl.scan_csv(t, separator="\t") for t in input.tables]
