@@ -52,7 +52,7 @@ PAIR_DIR = f"{WORK_DIR}/{{bait}}__{{prey}}"
 logger.info(f"Got PREYS: {PREYS}")
 logger.info(f"Got BAITS: {BAITS_NAMED}")
 logger.info(
-    f"Archived predictions in database (showing first 10, out of {len(DB_PATHS)}): {DB_PATHS[:10]}"
+    f"Archived predictions in database (showing first 5, out of {len(DB_PATHS)}): {[str(p) for p in DB_PATHS[:5]]}"
 )
 
 
@@ -231,7 +231,7 @@ rule make_missing_jsons:
             f"{PAIR_DIR}/prediction_manifest.txt", bait=BAITS_NAMED, prey=PREYS
         ),
     output:
-        json_temp=temp(directory(f"<scratch>/missing_jsons")),
+        json_temp=temp(directory(f"<scratch>/missing_jsons"), group_jobs=True),
     log:
         f"<logs>/make_missing_jsons.log",
     run:
@@ -265,7 +265,7 @@ rule run_all_alphafast:
     input:
         json_temp=rules.make_missing_jsons.output.json_temp,
     output:
-        predictions=temp(directory(f"<scratch>/predictions")),
+        predictions=temp(directory(f"<scratch>/predictions"), group_jobs=True),
     params:
         modules=modules_for("run_alphafast"),
         af_scriptdir=config["alphafast"]["script_dir"],
@@ -310,12 +310,17 @@ rule get_predictions:
         ),
     output:
         confidences=temp(
-            "<scratch>/prediction_data/{prediction}/{prediction}_confidences.json"
+            "<scratch>/prediction_data/{prediction}/{prediction}_confidences.json",
+            group_jobs=True,
         ),
         summary_confidences=temp(
-            "<scratch>/prediction_data/{prediction}/{prediction}_summary_confidences.json"
+            "<scratch>/prediction_data/{prediction}/{prediction}_summary_confidences.json",
+            group_jobs=True,
         ),
-        model=temp("<scratch>/prediction_data/{prediction}/{prediction}_model.cif"),
+        model=temp(
+            "<scratch>/prediction_data/{prediction}/{prediction}_model.cif",
+            group_jobs=True,
+        ),
     log:
         "<logs>/get_predictions/{prediction}.log",
     params:
