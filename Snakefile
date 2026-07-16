@@ -35,6 +35,8 @@ if prots := config.get("reference_proteins"):
 if structs := config.get("reference_structures"):
     STRUCTURE_BAITS = Path(structs).read_text().strip().splitlines()
 
+UNIPROT_LOCAL = config.get("uniprot_path", None)
+
 DB_PATHS = list(Path(config["predictions_database"]).glob("*.tar.zst"))
 DB_PREDS = [p.stem.split(".")[0] for p in DB_PATHS]
 
@@ -163,7 +165,9 @@ if PROTEINLIST_BAITS:
             copy(input.source, output.accessions)
             accessions = Path(input.source).read_text().splitlines()
             accessions = [x.strip() for x in accessions if x.strip()]
-            Path(output.fasta).write_text(fetch_uniprot_fasta(accessions))
+            Path(output.fasta).write_text(
+                fetch_uniprot_fasta(accessions, UNIPROT_LOCAL)
+            )
 
 
 if STRUCTURE_BAITS:
@@ -182,7 +186,7 @@ if STRUCTURE_BAITS:
             f"{ENV_DIR}/base.yaml"
         run:
             uni_ids = get_uniprot_ids_from_struc(input.source)
-            fasta = fetch_uniprot_fasta(uni_ids)
+            fasta = fetch_uniprot_fasta(uni_ids, UNIPROT_LOCAL)
             Path(output.accessions).write_text("\n".join(uni_ids) + "\n")
             Path(output.fasta).write_text(fasta)
 
@@ -194,7 +198,7 @@ rule make_preys:
         f"<logs>/make_preys/{Path(PAIR_DIR).name}.log",
     run:
         with open(output.preys_fasta, "w") as f:
-            f.write(fetch_uniprot_fasta([wildcards.prey]))
+            f.write(fetch_uniprot_fasta([wildcards.prey], UNIPROT_LOCAL))
 
 
 checkpoint make_manifest:

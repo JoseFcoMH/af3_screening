@@ -1,7 +1,9 @@
+from contextlib import closing
 from pathlib import Path
 import re
 import requests
 import logging
+from Bio import SeqIO
 
 logger = logging.getLogger(__name__)
 
@@ -57,28 +59,58 @@ def get_uniprot_ids_from_struc(cif_file: str) -> list[str]:
     return list({ref_to_uniprot[ref_id] for ref_id in d["_struct_ref_seq.ref_id"]})
 
 
-def fetch_uniprot_fasta(accessions):
-    accessions = [x.strip() for x in accessions if x.strip()]
+def accession_from_id(record_id: str) -> str:
+    """Convert sp|P12345|PROT_HUMAN to P12345."""
+    fields = record_id.split("|")
+    if len(fields) >= 3 and fields[0] in {"sp", "tr"}:
+        return fields[1]
+    return record_id
 
-    valid = [x for x in accessions if UNIPROT_ACCESSION_RE.match(x)]
-    invalid = sorted(set(accessions) - set(valid))
 
-    if invalid:
-        logger.warning(
-            f"Skipping {len(invalid)} invalid UniProt accession(s): "
-            f"{', '.join(invalid)}"
+def extract_fasta_records(
+    fasta_path: str | Path,
+    accessions: list[str],
+) -> tuple[list[str], str]:
+    """
+    Return:
+        missing_accessions, found_records_as_fasta_string
+    """
+    requested = list(dict.fromkeys(accessions))
+    missing: list[str] = []
+    fasta_parts: list[str] = []
+
+    logger.info(f"Trying to retrieve {len(requested)} accessions from {fasta_path}")
+
+    with closing(
+        SeqIO.index(
+            str(fasta_path),
+            "fasta",
+            key_function=accession_from_id,
         )
+    ) as index:
+        for accession in requested:
+            try:
+                raw_record = index.get_raw(accession)
+            except KeyError:
+                missing.append(accession)
+                continue
 
-    if not valid:
-        logger.warning("No valid UniProt accessions found.")
-        return ""
+            fasta_parts.append(raw_record.decode("utf-8"))
 
+    logger.info(f"Found {len(fasta_parts)} locally, {len(missing)} missing")
+
+    fasta_string = "".join(fasta_parts)
+
+    return missing, fasta_string
+
+
+def records_from_api(accessions: list[str]) -> str:
     batch_size = 50
     fasta = ""
-    for start in range(0, len(valid), batch_size):
-        valid_batch = valid[start : start + batch_size]
+    for start in range(0, len(accessions), batch_size):
+        accessions_batch = accessions[start : start + batch_size]
 
-        query = " OR ".join(f"accession_id:{acc}" for acc in valid_batch)
+        query = " OR ".join(f"accession_id:{acc}" for acc in accessions_batch)
 
         response = requests.get(
             "https://rest.uniprot.org/uniprotkb/stream",
@@ -98,7 +130,7 @@ def fetch_uniprot_fasta(accessions):
         if line.startswith((">sp|", ">tr|"))
     }
 
-    missing = sorted(set(valid) - returned)
+    missing = sorted(set(accessions) - returned)
     if missing:
         logger.warning(
             f"{len(missing)} valid UniProt accession(s) were not returned: "
@@ -107,6 +139,41 @@ def fetch_uniprot_fasta(accessions):
 
     logger.info(f"Retrieved {len(returned)} UniProt sequence(s)")
 
+    if (len(fasta) < 2) or (fasta[0][0] != ">"):
+        logger.error(f"Fasta has an inaccessions format: \n{fasta}")
+        raise ValueError("Bad API response")
+
+    return fasta
+
+
+def fetch_uniprot_fasta(
+    accessions: list[str], uniprot_path: None | Path | str = None
+) -> str:
+    accessions = [x.strip() for x in accessions if x.strip()]
+
+    valid = [x for x in accessions if UNIPROT_ACCESSION_RE.match(x)]
+    invalid = sorted(set(accessions) - set(valid))
+
+    if invalid:
+        logger.warning(
+            f"Skipping {len(invalid)} invalid UniProt accession(s): "
+            f"{', '.join(invalid)}"
+        )
+
+    if not valid:
+        logger.warning("No valid UniProt accessions found.")
+        return ""
+
+    missing_accessions = []
+    fasta = ""
+    if uniprot_path is not None:
+        missing_accessions, local_fasta = extract_fasta_records(
+            accessions=valid, fasta_path=uniprot_path
+        )
+        fasta += local_fasta
+    if len(missing_accessions) > 0:
+        fasta += records_from_api(accessions=missing_accessions)
+
     return fasta
 
 
@@ -114,8 +181,9 @@ def fasta_to_dict(fasta_path: Path | str) -> dict[str, str]:
     fastas = Path(fasta_path).read_text().strip().splitlines()
     d = {}
 
-    if len(fastas) < 2:
-        logger.warning(f"Fasta at {fasta_path} has no valid records: \n{fastas}")
+    if (len(fastas) < 2) or (fastas[0][0] != ">"):
+        logger.error(f"Fasta at {fasta_path} has an invalid format: \n{fastas}")
+        raise ValueError("Bad fasta file")
 
     uniprot, name = "", ""
     for line in fastas:
