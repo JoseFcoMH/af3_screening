@@ -1,6 +1,6 @@
 use-conda: true
 printshellcmds: false
-keep-going: false
+keep-going: true
 keep-incomplete: false
 rerun-incomplete: true
 rerun-triggers:
@@ -24,7 +24,7 @@ default-resources:
 
 set-resources:
   run_alphafast:
-    mem_mb: 128000
+    mem_mb: 256000
     cpus_per_task: 32
     uses_gpu: 4
 
@@ -47,9 +47,6 @@ set-resources:
 
   project_screen:
     cpus_per_task: 4
-
-
-
 
 set-threads:
   run_alphafast: 32
