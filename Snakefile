@@ -312,51 +312,6 @@ rule run_all_alphafast:
         """
 
 
-rule get_predictions:
-    input:
-        pred=branch(
-            lambda wc: wc.prediction in DB_PREDS,
-            before_update("<database>/{prediction}.tar.zst"),
-            rules.run_all_alphafast.output.predictions,
-        ),
-    output:
-        confidences=temp(
-            "<scratch>/prediction_data/{prediction}/{prediction}_confidences.json",
-            group_jobs=True,
-        ),
-        summary_confidences=temp(
-            "<scratch>/prediction_data/{prediction}/{prediction}_summary_confidences.json",
-            group_jobs=True,
-        ),
-        model=temp(
-            "<scratch>/prediction_data/{prediction}/{prediction}_model.cif",
-            group_jobs=True,
-        ),
-    log:
-        "<logs>/get_predictions/{prediction}.log",
-    priority: -5
-    params:
-        out_dir=f"{SCRATCH}/prediction_data/{{prediction}}",
-    shell:
-        r"""
-        exec > >(tee {log}) 2>&1
-        set -euo pipefail
-
-        if [[ {input.pred:q} == *.tar.zst ]]; then
-            tar --extract --zstd \
-                --file {input.pred:q} \
-                --directory {params.out_dir:q} \
-                ./{wildcards.prediction}_confidences.json \
-                ./{wildcards.prediction}_model.cif \
-                ./{wildcards.prediction}_summary_confidences.json
-        else
-            ln -s {input.pred:q}/{wildcards.prediction}/{wildcards.prediction}_confidences.json {params.out_dir:q}/{wildcards.prediction}_confidences.json \
-                && ln -s {input.pred:q}/{wildcards.prediction}/{wildcards.prediction}_model.cif {params.out_dir:q}/{wildcards.prediction}_model.cif \
-                && ln -s {input.pred:q}/{wildcards.prediction}/{wildcards.prediction}_summary_confidences.json {params.out_dir:q}/{wildcards.prediction}_summary_confidences.json
-        fi
-        """
-
-
 rule archive_predictions:
     input:
         pred=branch(
@@ -388,27 +343,42 @@ rule archive_predictions:
         """
 
 
-rule map_prediction_to_structure:
+rule get_predictions:
     input:
-        confs=confidences_for_pair,
-        cif_structure=lambda wc: BAITS_DICT[wc.bait],
+        pred=branch(
+            lambda wc: wc.prediction in DB_PREDS,
+            before_update("<database>/{prediction}.tar.zst"),
+            "<database>/{prediction}.tar.zst",
+        ),
     output:
-        attr_file="<pair_output>/{bait}__{prey}.defattr",
+        confidences=temp(
+            "<scratch>/prediction_data/{prediction}/{prediction}_confidences.json",
+            group_jobs=True,
+        ),
+        summary_confidences=temp(
+            "<scratch>/prediction_data/{prediction}/{prediction}_summary_confidences.json",
+            group_jobs=True,
+        ),
+        model=temp(
+            "<scratch>/prediction_data/{prediction}/{prediction}_model.cif",
+            group_jobs=True,
+        ),
     log:
-        "<logs>/map_prediction_to_structure/<pair_name>.log",
-    conda:
-        f"{ENV_DIR}/base.yaml"
+        "<logs>/get_predictions/{prediction}.log",
+    priority: -5
+    params:
+        out_dir=f"{SCRATCH}/prediction_data/{{prediction}}",
     shell:
         r"""
         exec > >(tee {log}) 2>&1
         set -euo pipefail
 
-        python {SCRIPT_DIR}/project_to_structure.py \
-            --af3_list {input.confs} \
-            --out_file {output.attr_file} \
-            --cif_file {input.cif_structure} \
-            --n_cpus {threads} \
-            --reference_chain {wildcards.prey}
+        tar --extract --zstd \
+            --file {input.pred:q} \
+            --directory {params.out_dir:q} \
+            ./{wildcards.prediction}_confidences.json \
+            ./{wildcards.prediction}_model.cif \
+            ./{wildcards.prediction}_summary_confidences.json
         """
 
 
@@ -457,6 +427,30 @@ rule get_and_plot_metrics:
             --out_dir {params.out_dir:q}
 
         rm -rf {params.ipsae_dir:q}
+        """
+
+
+rule map_prediction_to_structure:
+    input:
+        confs=confidences_for_pair,
+        cif_structure=lambda wc: BAITS_DICT[wc.bait],
+    output:
+        attr_file="<pair_output>/{bait}__{prey}.defattr",
+    log:
+        "<logs>/map_prediction_to_structure/<pair_name>.log",
+    conda:
+        f"{ENV_DIR}/base.yaml"
+    shell:
+        r"""
+        exec > >(tee {log}) 2>&1
+        set -euo pipefail
+
+        python {SCRIPT_DIR}/project_to_structure.py \
+            --af3_list {input.confs} \
+            --out_file {output.attr_file} \
+            --cif_file {input.cif_structure} \
+            --n_cpus {threads} \
+            --reference_chain {wildcards.prey}
         """
 
 
