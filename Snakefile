@@ -166,42 +166,46 @@ rule all:
         "<work>/summary_metrics.tsv",
 
 
-rule make_baits_from_proteinlist:
-    input:
-        source=lambda wc: BAITS_DICT[wc.bait],
-    output:
-        accessions=f"{PAIR_DIR}/baits_accessions.txt",
-        fasta=f"{PAIR_DIR}/baits.fasta",
-    log:
-        "<logs>/make_baits_from_proteinlist/<pair_name>.log",
-    wildcard_constraints:
-        bait="|".join(Path(b).stem for b in PROTEINLIST_BAITS),
-    run:
-        copy(input.source, output.accessions)
-        accessions = Path(input.source).read_text().splitlines()
-        accessions = [x.strip() for x in accessions if x.strip()]
-        Path(output.fasta).write_text(
-            fetch_uniprot_fasta(accessions, UNIPROT_LOCAL)
-        )
+if PROTEINLIST_BAITS:
+
+    rule make_baits_from_proteinlist:
+        input:
+            source=lambda wc: BAITS_DICT[wc.bait],
+        output:
+            accessions=f"{PAIR_DIR}/baits_accessions.txt",
+            fasta=f"{PAIR_DIR}/baits.fasta",
+        log:
+            "<logs>/make_baits_from_proteinlist/<pair_name>.log",
+        wildcard_constraints:
+            bait="|".join(Path(b).stem for b in PROTEINLIST_BAITS),
+        run:
+            copy(input.source, output.accessions)
+            accessions = Path(input.source).read_text().splitlines()
+            accessions = [x.strip() for x in accessions if x.strip()]
+            Path(output.fasta).write_text(
+                fetch_uniprot_fasta(accessions, UNIPROT_LOCAL)
+            )
 
 
-rule make_baits_from_structure:
-    input:
-        source=lambda wc: BAITS_DICT[wc.bait],
-    output:
-        accessions=f"{PAIR_DIR}/baits_accessions.txt",
-        fasta=f"{PAIR_DIR}/baits.fasta",
-    log:
-        "<logs>/make_baits_from_structure/<pair_name>.log",
-    wildcard_constraints:
-        bait="|".join(Path(b).stem for b in STRUCTURE_BAITS),
-    conda:
-        f"{ENV_DIR}/base.yaml"
-    run:
-        uni_ids = get_uniprot_ids_from_struc(input.source)
-        fasta = fetch_uniprot_fasta(uni_ids, UNIPROT_LOCAL)
-        Path(output.accessions).write_text("\n".join(uni_ids) + "\n")
-        Path(output.fasta).write_text(fasta)
+if STRUCTURE_BAITS:
+
+    rule make_baits_from_structure:
+        input:
+            source=lambda wc: BAITS_DICT[wc.bait],
+        output:
+            accessions=f"{PAIR_DIR}/baits_accessions.txt",
+            fasta=f"{PAIR_DIR}/baits.fasta",
+        log:
+            "<logs>/make_baits_from_structure/<pair_name>.log",
+        wildcard_constraints:
+            bait="|".join(Path(b).stem for b in STRUCTURE_BAITS),
+        conda:
+            f"{ENV_DIR}/base.yaml"
+        run:
+            uni_ids = get_uniprot_ids_from_struc(input.source)
+            fasta = fetch_uniprot_fasta(uni_ids, UNIPROT_LOCAL)
+            Path(output.accessions).write_text("\n".join(uni_ids) + "\n")
+            Path(output.fasta).write_text(fasta)
 
 
 rule make_preys:
