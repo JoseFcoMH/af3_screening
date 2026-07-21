@@ -5,11 +5,12 @@ import requests
 import json
 import shutil
 from itertools import batched
-from shutil import copy, copytree
 
 import polars as pl
 
 from scripts.load_utils import (
+    extract_fasta_records,
+    index_fasta,
     fasta_to_dict,
     fetch_uniprot_fasta,
     get_uniprot_ids_from_struc,
@@ -173,18 +174,17 @@ if PROTEINLIST_BAITS:
             source=lambda wc: BAITS_DICT[wc.bait],
         output:
             accessions=f"{PAIR_DIR}/baits_accessions.txt",
-            fasta=f"{PAIR_DIR}/baits.fasta",
         log:
             "<logs>/make_baits_from_proteinlist/<pair_name>.log",
         wildcard_constraints:
             bait="|".join(Path(b).stem for b in PROTEINLIST_BAITS),
-        run:
-            copy(input.source, output.accessions)
-            accessions = Path(input.source).read_text().splitlines()
-            accessions = [x.strip() for x in accessions if x.strip()]
-            Path(output.fasta).write_text(
-                fetch_uniprot_fasta(accessions, UNIPROT_LOCAL)
-            )
+        shell:
+            r"""
+            exec > >(tee {log}) 2>&1
+            set -euo pipefail
+
+            cp {input.source} {output.accessions}
+            """
 
 
 if STRUCTURE_BAITS:
@@ -194,7 +194,6 @@ if STRUCTURE_BAITS:
             source=lambda wc: BAITS_DICT[wc.bait],
         output:
             accessions=f"{PAIR_DIR}/baits_accessions.txt",
-            fasta=f"{PAIR_DIR}/baits.fasta",
         log:
             "<logs>/make_baits_from_structure/<pair_name>.log",
         wildcard_constraints:
@@ -203,24 +202,80 @@ if STRUCTURE_BAITS:
             f"{ENV_DIR}/base.yaml"
         run:
             uni_ids = get_uniprot_ids_from_struc(input.source)
-            fasta = fetch_uniprot_fasta(uni_ids, UNIPROT_LOCAL)
             Path(output.accessions).write_text("\n".join(uni_ids) + "\n")
-            Path(output.fasta).write_text(fasta)
 
 
-rule make_preys:
+rule make_uniprot_index:
+    input:
+        database=UNIPROT_LOCAL,
     output:
-        preys_fasta="<pair_dir>/prey.fasta",
+        index=str(Path(UNIPROT_LOCAL).parent / f"{Path(UNIPROT_LOCAL).stem}.idx"),
     log:
-        "<logs>/make_preys/<pair_name>.log",
+        "<logs>/make_uniprot_index.log",
     run:
-        with open(output.preys_fasta, "w") as f:
-            f.write(fetch_uniprot_fasta([wildcards.prey], UNIPROT_LOCAL))
+        index_fasta(fasta_path=input.database, idx_path=output.index)
+
+
+rule make_master_fasta:
+    input:
+        bait_lists=expand(
+            f"{PAIR_DIR}/baits_accessions.txt", prey=PREYS, bait=BAITS_NAMED
+        ),
+        uniprot_db=UNIPROT_LOCAL,
+        uniprot_idx=rules.make_uniprot_index.output.index,
+    output:
+        accessions="<work>/all_accessions.txt",
+        fasta="<work>/all_chains.fasta",
+        fasta_index="<work>/all_chains.idx",
+    log:
+        "<logs>/make_master_fasta.log",
+    params:
+        prey_accessions=PREYS,
+    run:
+        all_accessions = set(params.prey_accessions)
+        for blist in input.bait_lists:
+            baccesssions = Path(blist).read_text().strip().splitlines()
+            all_accessions.update(baccesssions)
+        accession_index = "\n".join(all_accessions)
+        Path(output.accessions).write_text(accession_index)
+        fasta = fetch_uniprot_fasta(all_accessions, input.uniprot_idx)
+        Path(output.fasta).write_text(fasta)
+        index_fasta(fasta_path=output.fasta, idx_path=output.fasta_index)
+
+
+rule make_prey_fasta_per_pair:
+    input:
+        fasta_index=rules.make_master_fasta.output.fasta_index,
+    output:
+        prey_fasta="<pair_dir>/prey.fasta",
+    log:
+        "<logs>/make_prey_fasta_per_pair/<pair_name>.log",
+    run:
+        _, prey_fasta = extract_fasta_records(
+            index_path=input.fasta_index, accessions=[wildcards.prey]
+        )
+        Path(output.prey_fasta).write_text(prey_fasta)
+
+
+rule make_baits_fasta_per_pair:
+    input:
+        fasta_index=rules.make_master_fasta.output.fasta_index,
+        baits_accessions="<pair_dir>/baits_accessions.txt",
+    output:
+        baits_fasta="<pair_dir>/baits.fasta",
+    log:
+        "<logs>/make_baits_fasta_per_pair/<pair_name>.log",
+    run:
+        baits = Path(input.baits_accessions).read_text().strip().splitlines()
+        _, baits_fasta = extract_fasta_records(
+            index_path=input.fasta_index, accessions=baits
+        )
+        Path(output.baits_fasta).write_text(baits_fasta)
 
 
 checkpoint make_manifest:
     input:
-        prey_fasta=rules.make_preys.output.preys_fasta,
+        prey_fasta="<pair_dir>/prey.fasta",
         baits_fasta="<pair_dir>/baits.fasta",
     output:
         manifest="<pair_dir>/prediction_manifest.txt",
@@ -247,8 +302,7 @@ checkpoint make_manifest:
 
 checkpoint make_batch_manifest:
     input:
-        all_baits=expand(f"{PAIR_DIR}/baits.fasta", bait=BAITS_NAMED, prey=PREYS),
-        all_preys=expand(f"{PAIR_DIR}/prey.fasta", bait=BAITS_NAMED, prey=PREYS),
+        fasta=rules.make_master_fasta.output.fasta,
         manifests=expand(
             f"{PAIR_DIR}/prediction_manifest.txt", bait=BAITS_NAMED, prey=PREYS
         ),
@@ -260,15 +314,16 @@ checkpoint make_batch_manifest:
     params:
         batch_size=PREDICTION_BATCH_SIZE,
     run:
-        prots = {}
-        for p in input.all_preys + input.all_baits:
-            prots.update(fasta_to_dict(p))
-        Path(output.chains).write_text(json.dumps(prots, indent=4))
         requested_predictions = set()
+        requested_chains = set()
         for m in input.manifests:
             for pred in Path(m).read_text().strip().splitlines():
                 if spred := pred.strip():
                     requested_predictions.add(spred)
+                    requested_chains.update(spred.split("__"))
+        prots = fasta_to_dict(input.fasta)
+        prots = {k: v for k, v in prots.items() if k in requested_chains}
+        Path(output.chains).write_text(json.dumps(prots, indent=4))
         sorted_predictions = sorted(requested_predictions)
         batches = []
         for batch_i, batch in enumerate(
@@ -416,7 +471,7 @@ rule get_predictions:
         ),
     log:
         "<logs>/get_predictions/{prediction}.log",
-    priority: -5
+    priority: -50
     params:
         out_dir=lambda wc, output: str(Path(output.confidences).parent),
     shell:

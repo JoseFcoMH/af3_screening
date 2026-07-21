@@ -1,3 +1,4 @@
+jobs: 500
 use-conda: true
 printshellcmds: false
 keep-going: true
@@ -25,17 +26,13 @@ default-resources:
 
 set-resources:
   run_alphafast:
+    runtime: "240h"
     mem_mb: 256000
     cpus_per_task: 32
     uses_gpu: 4
 
-  make_baits_from_structure:
-    api_requests: 1
-
-  make_baits_from_proteinlist:
-    api_requests: 1
-
-  make_preys:
+  make_master_fasta:
+    mem_mb: 16000
     api_requests: 1
 
   map_prediction_to_structure:

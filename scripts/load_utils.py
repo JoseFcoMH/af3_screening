@@ -67,8 +67,26 @@ def accession_from_id(record_id: str) -> str:
     return record_id
 
 
+def index_fasta(fasta_path: Path | str, idx_path: Path | str | None = None) -> None:
+    fasta = Path(fasta_path)
+    if idx_path is None:
+        idx_path = fasta.parent / f"{fasta.stem}.idx"
+    else:
+        idx_path = Path(idx_path)
+    index = SeqIO.index_db(
+        str(idx_path),
+        str(fasta),
+        "fasta",
+        key_function=accession_from_id,
+    )
+    logger.info(
+        f"Indexed {len(index)} records at {str(idx_path)} for fasta {str(fasta)}"
+    )
+    index.close()
+
+
 def extract_fasta_records(
-    fasta_path: str | Path,
+    index_path: str | Path,
     accessions: list[str],
 ) -> tuple[list[str], str]:
     """
@@ -79,15 +97,9 @@ def extract_fasta_records(
     missing: list[str] = []
     fasta_parts: list[str] = []
 
-    logger.info(f"Trying to retrieve {len(requested)} accessions from {fasta_path}")
+    logger.info(f"Trying to retrieve {len(requested)} accessions from {index_path}")
 
-    with closing(
-        SeqIO.index(
-            str(fasta_path),
-            "fasta",
-            key_function=accession_from_id,
-        )
-    ) as index:
+    with closing(SeqIO.index_db(str(index_path))) as index:
         for accession in requested:
             try:
                 raw_record = index.get_raw(accession)
@@ -168,7 +180,7 @@ def fetch_uniprot_fasta(
     fasta = ""
     if uniprot_path is not None:
         missing_accessions, local_fasta = extract_fasta_records(
-            accessions=valid, fasta_path=uniprot_path
+            accessions=valid, index_path=uniprot_path
         )
         fasta += local_fasta
     if len(missing_accessions) > 0:
