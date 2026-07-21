@@ -5,6 +5,8 @@ import requests
 import json
 import shutil
 from itertools import batched
+from functools import cache
+from types import MappingProxyType
 
 import polars as pl
 
@@ -81,31 +83,39 @@ def modules_for(rule_name):
     return "" if not mods else "module load " + " ".join(mods)
 
 
-def batch_per_prediction(wc):
+@cache
+def read_batch_manifest():
     manifest_path = checkpoints.make_batch_manifest.get().output.batch_manifest
-    batch_i = (
-        pl.scan_csv(manifest_path, separator="\t")
-        .filter(pl.col("prediction").eq(wc.prediction))
-        .collect()
-    )["batch"].to_list()[0]
+    table = pl.read_csv(manifest_path, separator="\t")
+    mapping = {row["prediction"]: row["batch"] for row in table.iter_rows(named=True)}
+    return MappingProxyType(mapping)
+
+
+def batch_per_prediction(wc):
+    manifest_mapping = read_batch_manifest()
+    batch_i = manifest_mapping[wc.prediction]
     return f"<scratch>/predictions/batch_{batch_i}"
 
 
-def read_manifest(bait, prey):
+@cache
+def read_pair_manifest(bait, prey):
     manifest_path = checkpoints.make_manifest.get(bait=bait, prey=prey).output.manifest
-    return Path(manifest_path).read_text().strip().splitlines()
+    return tuple(Path(manifest_path).read_text().strip().splitlines())
 
 
-def confidences_for_pair(wc):
-    predictions = read_manifest(bait=wc.bait, prey=wc.prey)
-    return expand(
-        "<scratch>/prediction_data/{prediction}/{prediction}_confidences.json",
-        prediction=predictions,
+@cache
+def confidences_for_pair(bait, prey):
+    predictions = read_pair_manifest(bait=bait, prey=prey)
+    return tuple(
+        expand(
+            "<scratch>/prediction_data/{prediction}/{prediction}_confidences.json",
+            prediction=predictions,
+        )
     )
 
 
 def models_for_pair(wc):
-    predictions = read_manifest(bait=wc.bait, prey=wc.prey)
+    predictions = read_pair_manifest(bait=wc.bait, prey=wc.prey)
     return expand(
         "<scratch>/prediction_data/{prediction}/{prediction}_model.cif",
         prediction=predictions,
@@ -113,7 +123,7 @@ def models_for_pair(wc):
 
 
 def summaries_for_pair(wc):
-    predictions = read_manifest(bait=wc.bait, prey=wc.prey)
+    predictions = read_pair_manifest(bait=wc.bait, prey=wc.prey)
     return expand(
         "<scratch>/prediction_data/{prediction}/{prediction}_summary_confidences.json",
         prediction=predictions,
@@ -121,7 +131,7 @@ def summaries_for_pair(wc):
 
 
 def predictions_for_pair(bait, prey):
-    predictions = read_manifest(bait=bait, prey=prey)
+    predictions = read_pair_manifest(bait=bait, prey=prey)
     return expand(
         "<database>/{prediction}.tar.zst",
         prediction=predictions,
@@ -132,7 +142,7 @@ def all_predictions(wc):
     preds = []
     for bait in BAITS_NAMED:
         for prey in PREYS:
-            pred_names = read_manifest(bait=bait, prey=prey)
+            pred_names = read_pair_manifest(bait=bait, prey=prey)
             preds.extend([f"{DATABASE}/{n}.tar.zst" for n in pred_names])
     return list(set(preds))
 
@@ -490,7 +500,7 @@ rule get_predictions:
 
 rule get_and_plot_metrics:
     input:
-        confs=confidences_for_pair,
+        confs=lambda wc: confidences_for_pair(bait=wc.bait, prey=wc.prey),
         models=models_for_pair,
         summaries=summaries_for_pair,
     output:
@@ -538,7 +548,7 @@ rule get_and_plot_metrics:
 
 rule map_prediction_to_structure:
     input:
-        confs=confidences_for_pair,
+        confs=lambda wc: confidences_for_pair(bait=wc.bait, prey=wc.prey),
         cif_structure=lambda wc: BAITS_DICT[wc.bait],
     output:
         attr_file="<pair_output>/{bait}__{prey}.defattr",
@@ -592,7 +602,7 @@ EOF
 
 rule project_screen:
     input:
-        confs=confidences_for_pair,
+        confs=lambda wc: confidences_for_pair(bait=wc.bait, prey=wc.prey),
     output:
         out_table="<pair_output>/projected_icp.tsv",
     log:

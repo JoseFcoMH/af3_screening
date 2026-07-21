@@ -4,6 +4,7 @@ import re
 import requests
 import logging
 from Bio import SeqIO
+from functools import cache
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ def load_smi(smi_path: Path) -> dict[str, str]:
     }
 
 
+@cache
 def get_uniprot_ids_from_struc(cif_file: str) -> list[str]:
     from Bio.PDB.MMCIF2Dict import MMCIF2Dict
 
