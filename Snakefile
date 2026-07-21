@@ -4,6 +4,7 @@ from pathlib import Path
 import requests
 import json
 import shutil
+from itertools import batched
 from shutil import copy, copytree
 
 import polars as pl
@@ -36,6 +37,7 @@ if structs := config.get("reference_structures"):
     STRUCTURE_BAITS = Path(structs).read_text().strip().splitlines()
 
 UNIPROT_LOCAL = config.get("uniprot_path", None)
+PREDICTION_BATCH_SIZE = int(config.get("prediction_batch_size", 4000))
 
 DB_PATHS = list(Path(config["predictions_database"]).glob("*.tar.zst"))
 DB_PREDS = [p.stem.split(".")[0] for p in DB_PATHS]
@@ -76,6 +78,16 @@ pathvars:
 def modules_for(rule_name):
     mods = config.get("modules", {}).get(rule_name, [])
     return "" if not mods else "module load " + " ".join(mods)
+
+
+def batch_per_prediction(wc):
+    manifest_path = checkpoints.make_batch_manifest.get().output.batch_manifest
+    batch_i = (
+        pl.scan_csv(manifest_path, separator="\t")
+        .filter(pl.col("prediction").eq(wc.prediction))
+        .collect()
+    )["batch"].to_list()[0]
+    return f"<scratch>/predictions/batch_{batch_i}"
 
 
 def read_manifest(bait, prey):
@@ -154,46 +166,42 @@ rule all:
         "<work>/summary_metrics.tsv",
 
 
-if PROTEINLIST_BAITS:
-
-    rule make_baits_from_proteinlist:
-        input:
-            source=lambda wc: BAITS_DICT[wc.bait],
-        output:
-            accessions=f"{PAIR_DIR}/baits_accessions.txt",
-            fasta=f"{PAIR_DIR}/baits.fasta",
-        log:
-            "<logs>/make_baits_from_proteinlist/<pair_name>.log",
-        wildcard_constraints:
-            bait="|".join(Path(b).stem for b in PROTEINLIST_BAITS),
-        run:
-            copy(input.source, output.accessions)
-            accessions = Path(input.source).read_text().splitlines()
-            accessions = [x.strip() for x in accessions if x.strip()]
-            Path(output.fasta).write_text(
-                fetch_uniprot_fasta(accessions, UNIPROT_LOCAL)
-            )
+rule make_baits_from_proteinlist:
+    input:
+        source=lambda wc: BAITS_DICT[wc.bait],
+    output:
+        accessions=f"{PAIR_DIR}/baits_accessions.txt",
+        fasta=f"{PAIR_DIR}/baits.fasta",
+    log:
+        "<logs>/make_baits_from_proteinlist/<pair_name>.log",
+    wildcard_constraints:
+        bait="|".join(Path(b).stem for b in PROTEINLIST_BAITS),
+    run:
+        copy(input.source, output.accessions)
+        accessions = Path(input.source).read_text().splitlines()
+        accessions = [x.strip() for x in accessions if x.strip()]
+        Path(output.fasta).write_text(
+            fetch_uniprot_fasta(accessions, UNIPROT_LOCAL)
+        )
 
 
-if STRUCTURE_BAITS:
-
-    rule make_baits_from_structure:
-        input:
-            source=lambda wc: BAITS_DICT[wc.bait],
-        output:
-            accessions=f"{PAIR_DIR}/baits_accessions.txt",
-            fasta=f"{PAIR_DIR}/baits.fasta",
-        log:
-            "<logs>/make_baits_from_structure/<pair_name>.log",
-        wildcard_constraints:
-            bait="|".join(Path(b).stem for b in STRUCTURE_BAITS),
-        conda:
-            f"{ENV_DIR}/base.yaml"
-        run:
-            uni_ids = get_uniprot_ids_from_struc(input.source)
-            fasta = fetch_uniprot_fasta(uni_ids, UNIPROT_LOCAL)
-            Path(output.accessions).write_text("\n".join(uni_ids) + "\n")
-            Path(output.fasta).write_text(fasta)
+rule make_baits_from_structure:
+    input:
+        source=lambda wc: BAITS_DICT[wc.bait],
+    output:
+        accessions=f"{PAIR_DIR}/baits_accessions.txt",
+        fasta=f"{PAIR_DIR}/baits.fasta",
+    log:
+        "<logs>/make_baits_from_structure/<pair_name>.log",
+    wildcard_constraints:
+        bait="|".join(Path(b).stem for b in STRUCTURE_BAITS),
+    conda:
+        f"{ENV_DIR}/base.yaml"
+    run:
+        uni_ids = get_uniprot_ids_from_struc(input.source)
+        fasta = fetch_uniprot_fasta(uni_ids, UNIPROT_LOCAL)
+        Path(output.accessions).write_text("\n".join(uni_ids) + "\n")
+        Path(output.fasta).write_text(fasta)
 
 
 rule make_preys:
@@ -233,7 +241,7 @@ checkpoint make_manifest:
         Path(output.manifest).write_text("\n".join(predictions) + "\n")
 
 
-rule make_missing_jsons:
+checkpoint make_batch_manifest:
     input:
         all_baits=expand(f"{PAIR_DIR}/baits.fasta", bait=BAITS_NAMED, prey=PREYS),
         all_preys=expand(f"{PAIR_DIR}/prey.fasta", bait=BAITS_NAMED, prey=PREYS),
@@ -241,42 +249,81 @@ rule make_missing_jsons:
             f"{PAIR_DIR}/prediction_manifest.txt", bait=BAITS_NAMED, prey=PREYS
         ),
     output:
-        json_temp=temp(directory("<scratch>/missing_jsons"), group_jobs=True),
+        batch_manifest=temp("<scratch>/missing_jsons/batched_manifest.tsv"),
+        chains=temp("<scratch>/missing_jsons/chains.json"),
     log:
-        "<logs>/make_missing_jsons.log",
+        "<logs>/make_batch_manifest.log",
+    params:
+        batch_size=PREDICTION_BATCH_SIZE,
     run:
-        requested_predictions = []
-        seen = set()
-        for m in input.manifests:
-            pair = Path(m).parent
-            for pred in Path(m).read_text().strip().splitlines():
-                key = (pair, pred)
-                if key not in seen:
-                    seen.add(key)
-                    requested_predictions.append({"pair": pair, "pred": pred})
         prots = {}
-        for p in input.all_preys:
+        for p in input.all_preys + input.all_baits:
             prots.update(fasta_to_dict(p))
-        for b in input.all_baits:
-            prots.update(fasta_to_dict(b))
-        Path(output.json_temp).mkdir(exist_ok=True)
-        for req_pred in requested_predictions:
-            pair, name = req_pred["pair"], req_pred["pred"]
-            p1, p2 = name.split("__")
+        Path(output.chains).write_text(json.dumps(prots, indent=4))
+        requested_predictions = set()
+        for m in input.manifests:
+            for pred in Path(m).read_text().strip().splitlines():
+                if spred := pred.strip():
+                    requested_predictions.add(spred)
+        sorted_predictions = sorted(requested_predictions)
+        batches = []
+        for batch_i, batch in enumerate(
+            batched(sorted_predictions, params.batch_size)
+        ):
+            batches.append(
+                pl.DataFrame({"prediction": batch}).with_columns(
+                    pl.lit(batch_i).alias("batch")
+                )
+            )
+        logger.info(
+            f"Made {len(batches)} batches of {params.batch_size} predictions (last batch with {len(batches[-1])} predictions)"
+        )
+        pl.concat(batches).write_csv(output.batch_manifest, separator="\t")
+
+
+rule make_json_batch:
+    input:
+        manifest=lambda wc: checkpoints.make_batch_manifest.get().output.batch_manifest,
+        chains=lambda wc: checkpoints.make_batch_manifest.get().output.chains,
+    output:
+        json_temp=temp(
+            directory("<scratch>/missing_jsons/batch_{batch}"), group_jobs=True
+        ),
+    log:
+        "<logs>/make_missing_jsons/batch_{batch}.log",
+    run:
+        json_batch_dir = Path(output.json_temp)
+        json_batch_dir.mkdir(exist_ok=True, parents=True)
+        with open(input.chains) as f:
+            prots = json.load(f)
+        manifest = pl.scan_csv(input.manifest, separator="\t")
+        prediction_batch = (
+            manifest.filter(
+                pl.col("batch").cast(pl.Int64).eq(int(wildcards.batch))
+            ).collect()
+        )["prediction"].to_list()
+        for req_pred in prediction_batch:
+            p1, p2 = req_pred.split("__")
             dimer = dimer_template.copy()
-            dimer["name"] = name
+            dimer["name"] = req_pred
             dimer["sequences"][0]["protein"]["sequence"] = prots[p1]
             dimer["sequences"][1]["protein"]["sequence"] = prots[p2]
-            path = Path(output.json_temp) / f"{name}.json"
+            path = json_batch_dir / f"{req_pred}.json"
             path.write_text(json.dumps(dimer, indent=4))
 
 
-rule run_all_alphafast:
+rule run_alphafast_batch:
     input:
-        json_temp=rules.make_missing_jsons.output.json_temp,
+        json_temp=rules.make_json_batch.output.json_temp,
     output:
-        predictions=temp(directory("<scratch>/predictions"), group_jobs=True),
-    priority: 5
+        predictions=temp(
+            directory("<scratch>/predictions/batch_{batch}"), group_jobs=True
+        ),
+    log:
+        "<logs>/run_alphafast_batch/batch_{batch}.log",
+    priority: 50
+    resources:
+        af_batch_slots=1,
     params:
         modules=modules_for("run_alphafast"),
         af_scriptdir=config["alphafast"]["script_dir"],
@@ -314,10 +361,10 @@ rule run_all_alphafast:
 
 rule archive_predictions:
     input:
-        pred=branch(
+        batch_dir=branch(
             lambda wc: wc.prediction in DB_PREDS,
             [],
-            rules.run_all_alphafast.output.predictions,
+            batch_per_prediction,
         ),
     output:
         archive=update("<database>/{prediction}.tar.zst"),
@@ -327,10 +374,10 @@ rule archive_predictions:
         exec > >(tee {log}) 2>&1
         set -euo pipefail
 
-        echo "Archiving {input.pred:q}/{wildcards.prediction} as {output.archive:q}"
+        echo "Archiving {input.batch_dir:q}/{wildcards.prediction} as {output.archive:q}"
 
         if [[ -e {output.archive:q} ]]; then
-            echo "Archiving requested for {output.archive:q}, skipping as archive already exists"
+            echo "Archiving requested for {output.archive:q}, skipping as archive already exists. This should not have happened"
             exit 0
         fi
 
@@ -338,7 +385,7 @@ rule archive_predictions:
             zst_NBTHREADS={threads} \
             tar --create --zstd \
             --file {output.archive:q} \
-            --directory {input.pred:q}/{wildcards.prediction} \
+            --directory {input.batch_dir:q}/{wildcards.prediction} \
             .
         """
 
@@ -367,7 +414,7 @@ rule get_predictions:
         "<logs>/get_predictions/{prediction}.log",
     priority: -5
     params:
-        out_dir=f"{SCRATCH}/prediction_data/{{prediction}}",
+        out_dir=lambda wc, output: str(Path(output.confidences).parent),
     shell:
         r"""
         exec > >(tee {log}) 2>&1

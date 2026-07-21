@@ -21,6 +21,7 @@ default-resources:
   - runtime=2h
   - cpus_per_task=1
   - mem_mb=4096
+  - af_batch_slots=1
 
 set-resources:
   run_alphafast:

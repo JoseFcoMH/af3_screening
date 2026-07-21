@@ -16,6 +16,7 @@ resources:
   - cpus_per_task=192
   - uses_gpu=4
   - api_requests=4
+  - af_batch_slots=1
 
 default-resources:
   - runtime=2h
