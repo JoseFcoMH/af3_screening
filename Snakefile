@@ -667,10 +667,11 @@ rule summarize_all:
             logger.info(f"Found {len(input.tables)} tables to concatenate.")
             tables = [pl.scan_csv(t, separator="\t") for t in input.tables]
             summary = (
-                pl.concat(tables).sort("ipSAE", descending=True).unique("pair")
+                pl.concat(tables)
+                .unique("pair")
+                .sort("ipSAE", descending=True)
+                .collect()
             )
-            summary.sink_csv(output.summary_table, separator="\t")
-            logger.info(
-                f"Wrote a total of {len(summary.select('pair').collect())} records"
-            )
+            summary.write_csv(output.summary_table, separator="\t")
+            logger.info(f"Wrote a total of {len(summary)} records.")
             logger.info("Done.")
