@@ -10,6 +10,7 @@ from types import MappingProxyType
 
 import polars as pl
 
+from scripts.logging_utils import rule_logger
 from scripts.load_utils import (
     extract_fasta_records,
     index_fasta,
@@ -240,7 +241,7 @@ if PROTEINLIST_BAITS:
             bait="|".join(Path(b).stem for b in PROTEINLIST_BAITS),
         shell:
             r"""
-            exec > >(tee {log}) 2>&1
+            exec > >(tee {log:q}) 2>&1
             set -euo pipefail
 
             cp {input.source} {output.accessions}
@@ -259,8 +260,9 @@ if STRUCTURE_BAITS:
         wildcard_constraints:
             bait="|".join(Path(b).stem for b in STRUCTURE_BAITS),
         run:
-            uni_ids = get_uniprot_ids_from_struc(input.source)
-            Path(output.accessions).write_text("\n".join(uni_ids) + "\n")
+            with rule_logger(logfile=log[0], rule_name=rule) as logger:
+                uni_ids = get_uniprot_ids_from_struc(input.source)
+                Path(output.accessions).write_text("\n".join(uni_ids) + "\n")
 
 
 rule make_uniprot_index:
@@ -271,7 +273,8 @@ rule make_uniprot_index:
     log:
         "<logs>/make_uniprot_index.log",
     run:
-        index_fasta(fasta_path=input.database, idx_path=output.index)
+        with rule_logger(logfile=log[0], rule_name=rule) as logger:
+            index_fasta(fasta_path=input.database, idx_path=output.index)
 
 
 rule make_master_fasta:
@@ -290,14 +293,15 @@ rule make_master_fasta:
     params:
         prey_accessions=PREYS,
     run:
-        all_accessions = set(params.prey_accessions)
-        for blist in input.bait_lists:
-            baccesssions = Path(blist).read_text().strip().splitlines()
-            all_accessions.update(baccesssions)
-        Path(output.accessions).write_text("\n".join(all_accessions))
-        fasta = fetch_uniprot_fasta(all_accessions, input.uniprot_idx)
-        Path(output.fasta).write_text(fasta)
-        index_fasta(fasta_path=output.fasta, idx_path=output.fasta_index)
+        with rule_logger(logfile=log[0], rule_name=rule) as logger:
+            all_accessions = set(params.prey_accessions)
+            for blist in input.bait_lists:
+                baccesssions = Path(blist).read_text().strip().splitlines()
+                all_accessions.update(baccesssions)
+            Path(output.accessions).write_text("\n".join(all_accessions))
+            fasta = fetch_uniprot_fasta(all_accessions, input.uniprot_idx)
+            Path(output.fasta).write_text(fasta)
+            index_fasta(fasta_path=output.fasta, idx_path=output.fasta_index)
 
 
 rule make_prey_fasta_per_pair:
@@ -308,10 +312,11 @@ rule make_prey_fasta_per_pair:
     log:
         "<logs>/make_prey_fasta_per_pair/<pair_name>.log",
     run:
-        _, prey_fasta = extract_fasta_records(
-            index_path=input.fasta_index, accessions=[wildcards.prey]
-        )
-        Path(output.prey_fasta).write_text(prey_fasta)
+        with rule_logger(logfile=log[0], rule_name=rule) as logger:
+            _, prey_fasta = extract_fasta_records(
+                index_path=input.fasta_index, accessions=[wildcards.prey]
+            )
+            Path(output.prey_fasta).write_text(prey_fasta)
 
 
 rule make_baits_fasta_per_pair:
@@ -323,11 +328,12 @@ rule make_baits_fasta_per_pair:
     log:
         "<logs>/make_baits_fasta_per_pair/<pair_name>.log",
     run:
-        baits = Path(input.baits_accessions).read_text().strip().splitlines()
-        _, baits_fasta = extract_fasta_records(
-            index_path=input.fasta_index, accessions=baits
-        )
-        Path(output.baits_fasta).write_text(baits_fasta)
+        with rule_logger(logfile=log[0], rule_name=rule) as logger:
+            baits = Path(input.baits_accessions).read_text().strip().splitlines()
+            _, baits_fasta = extract_fasta_records(
+                index_path=input.fasta_index, accessions=baits
+            )
+            Path(output.baits_fasta).write_text(baits_fasta)
 
 
 checkpoint make_manifest:
@@ -336,26 +342,32 @@ checkpoint make_manifest:
         baits_fasta="<pair_dir>/baits.fasta",
     output:
         manifest="<pair_dir>/prediction_manifest.txt",
+    log:
+        "<logs>/make_manifests/<pair_name>.log",
     priority: 100
     params:
         max_len=config.get("total_max_res", 2549),
         database=DATABASE,
         done_preds=DB_PREDS,
     run:
-        prey_name, prey_seq = next(iter(fasta_to_dict(input.prey_fasta).items()))
-        baits = fasta_to_dict(input.baits_fasta)
-        predictions = []
-        for bait_name, bait_seq in baits.items():
-            name = "__".join(sorted([prey_name, bait_name]))
-            if (
-                (total_len := len(prey_seq) + len(bait_seq)) > params.max_len
-            ) and name not in params.done_preds:
-                logger.warning(
-                    f"Skipped pair {name} (doesn't already exist and it's too long - {total_len} residues total, max is {params.max_len})"
-                )
-                continue
-            predictions.append(name)
-        Path(output.manifest).write_text("\n".join(predictions))
+        with rule_logger(logfile=log[0], rule_name=rule) as logger:
+            prey_name, prey_seq = next(
+                iter(fasta_to_dict(input.prey_fasta).items())
+            )
+            baits = fasta_to_dict(input.baits_fasta)
+            predictions = []
+            for bait_name, bait_seq in baits.items():
+                name = "__".join(sorted([prey_name, bait_name]))
+                if (
+                    (total_len := len(prey_seq) + len(bait_seq)) > params.max_len
+                ) and name not in params.done_preds:
+                    logger.warning(
+                        f"Skipped pair {name} (doesn't already exist and it's too long - {total_len} residues total, max is {params.max_len})"
+                    )
+                    continue
+                predictions.append(name)
+            logger.info(f"Wrote {len(predictions)} entries in manifest.")
+            Path(output.manifest).write_text("\n".join(predictions))
 
 
 rule make_json_batch:
@@ -369,21 +381,24 @@ rule make_json_batch:
     log:
         "<logs>/make_missing_jsons/batch_{batch}.log",
     run:
-        json_batch_dir = Path(output.json_temp)
-        json_batch_dir.mkdir(exist_ok=True, parents=True)
-        prots = fasta_to_dict(input.fasta)
-        manifest = batch_manifests(input.manifests)
-        prediction_batch = (
-            manifest.filter(pl.col("batch").cast(pl.Int64).eq(int(wildcards.batch)))
-        )["prediction"].to_list()
-        for req_pred in prediction_batch:
-            p1, p2 = req_pred.split("__")
-            dimer = dimer_template.copy()
-            dimer["name"] = req_pred
-            dimer["sequences"][0]["protein"]["sequence"] = prots[p1]
-            dimer["sequences"][1]["protein"]["sequence"] = prots[p2]
-            path = json_batch_dir / f"{req_pred}.json"
-            path.write_text(json.dumps(dimer, indent=4))
+        with rule_logger(logfile=log[0], rule_name=rule) as logger:
+            json_batch_dir = Path(output.json_temp)
+            json_batch_dir.mkdir(exist_ok=True, parents=True)
+            prots = fasta_to_dict(input.fasta)
+            manifest = batch_manifests(input.manifests)
+            prediction_batch = (
+                manifest.filter(
+                    pl.col("batch").cast(pl.Int64).eq(int(wildcards.batch))
+                )
+            )["prediction"].to_list()
+            for req_pred in prediction_batch:
+                p1, p2 = req_pred.split("__")
+                dimer = dimer_template.copy()
+                dimer["name"] = req_pred
+                dimer["sequences"][0]["protein"]["sequence"] = prots[p1]
+                dimer["sequences"][1]["protein"]["sequence"] = prots[p2]
+                path = json_batch_dir / f"{req_pred}.json"
+                path.write_text(json.dumps(dimer, indent=4))
 
 
 rule run_alphafast_batch:
@@ -410,7 +425,7 @@ rule run_alphafast_batch:
         af_gpu_devices=config["alphafast"].get("gpu_devices", "0"),
     shell:
         """
-        exec > >(tee {log}) 2>&1
+        exec > >(tee {log:q}) 2>&1
         set -euo pipefail
 
         mkdir -p {output.predictions:q}
@@ -447,7 +462,7 @@ rule archive_predictions:
     priority: 20
     shell:
         r"""
-        exec > >(tee {log}) 2>&1
+        exec > >(tee {log:q}) 2>&1
         set -euo pipefail
 
         echo "Archiving {input.batch_dir:q}/{wildcards.prediction} as {output.archive:q}"
@@ -493,7 +508,7 @@ rule get_predictions:
         out_dir=lambda wc, output: str(Path(output.confidences).parent),
     shell:
         r"""
-        exec > >(tee {log}) 2>&1
+        exec > >(tee {log:q}) 2>&1
         set -euo pipefail
 
         tar --extract --zstd \
@@ -525,7 +540,7 @@ rule get_and_plot_metrics:
         n_files=lambda wc, input: len(input.models),
     shell:
         r"""
-        exec > >(tee {log}) 2>&1
+        exec > >(tee {log:q}) 2>&1
         set -euo pipefail
 
         mkdir -p {params.ipsae_dir:q}
@@ -565,7 +580,7 @@ rule map_prediction_to_structure:
         f"{ENV_DIR}/base.yaml"
     shell:
         r"""
-        exec > >(tee {log}) 2>&1
+        exec > >(tee {log:q}) 2>&1
         set -euo pipefail
 
         python {SCRIPT_DIR}/project_to_structure.py \
@@ -590,7 +605,7 @@ rule apply_defattr:
         attribute_name=lambda wc: f"{wc.bait}_{wc.prey}",
     shell:
         r"""
-        exec > >(tee {log}) 2>&1
+        exec > >(tee {log:q}) 2>&1
         set -euo pipefail
 
         {params.modules}
@@ -623,7 +638,7 @@ rule project_screen:
         prey=lambda wc: wc.prey,
     shell:
         r"""
-        exec > >(tee {log}) 2>&1
+        exec > >(tee {log:q}) 2>&1
         set -euo pipefail
 
         python {SCRIPT_DIR}/project_screen.py \
@@ -648,8 +663,14 @@ rule summarize_all:
     conda:
         f"{ENV_DIR}/base.yaml"
     run:
-        logger.info(f"Found {len(input.tables)} tables to concatenate.")
-        tables = [pl.scan_csv(t, separator="\t") for t in input.tables]
-        summary = pl.concat(tables).sort("ipSAE", descending=True).unique("pair")
-        summary.sink_csv(output.summary_table, separator="\t")
-        logger.info("Done.")
+        with rule_logger(logfile=log[0], rule_name=rule) as logger:
+            logger.info(f"Found {len(input.tables)} tables to concatenate.")
+            tables = [pl.scan_csv(t, separator="\t") for t in input.tables]
+            summary = (
+                pl.concat(tables).sort("ipSAE", descending=True).unique("pair")
+            )
+            summary.sink_csv(output.summary_table, separator="\t")
+            logger.info(
+                f"Wrote a total of {len(summary.select('pair').collect())} records"
+            )
+            logger.info("Done.")

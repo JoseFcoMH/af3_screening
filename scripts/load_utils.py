@@ -4,9 +4,10 @@ import re
 import requests
 import logging
 from Bio import SeqIO
+from Bio.PDB.MMCIF2Dict import MMCIF2Dict
 from functools import cache
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(f"af3_screening.{__name__}")
 
 dimer_template = {
     "name": "dimer_prediction",
@@ -47,8 +48,6 @@ def load_smi(smi_path: Path) -> dict[str, str]:
 
 @cache
 def get_uniprot_ids_from_struc(cif_file: str) -> list[str]:
-    from Bio.PDB.MMCIF2Dict import MMCIF2Dict
-
     d = MMCIF2Dict(cif_file)
 
     ref_to_uniprot = dict(
@@ -58,7 +57,9 @@ def get_uniprot_ids_from_struc(cif_file: str) -> list[str]:
         )
     )
 
-    return list({ref_to_uniprot[ref_id] for ref_id in d["_struct_ref_seq.ref_id"]})
+    uni_ids = list({ref_to_uniprot[ref_id] for ref_id in d["_struct_ref_seq.ref_id"]})
+    logger.info(f"Found {len(uni_ids)} uniprot IDS in {Path(cif_file).name}")
+    return uni_ids
 
 
 def accession_from_id(record_id: str) -> str:
@@ -154,7 +155,7 @@ def records_from_api(accessions: list[str]) -> str:
     logger.info(f"Retrieved {len(returned)} UniProt sequence(s)")
 
     if (len(fasta) < 2) or (fasta[0][0] != ">"):
-        logger.error(f"Fasta has an inaccessions format: \n{fasta}")
+        logger.error(f"Fasta has a bad format: \n{fasta}")
         raise ValueError("Bad API response")
 
     return fasta
