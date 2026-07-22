@@ -83,28 +83,76 @@ def modules_for(rule_name):
     return "" if not mods else "module load " + " ".join(mods)
 
 
+def batch_manifests(
+    manifests: list[Path | str],
+    batch_size: int = PREDICTION_BATCH_SIZE,
+    done: Path | str = DB_PREDS,
+) -> pl.DataFrame:
+    requested_predictions = set()
+    for m in manifests:
+        for pred in Path(m).read_text().strip().splitlines():
+            if pred not in done:
+                requested_predictions.add(pred)
+    sorted_predictions = sorted(requested_predictions)
+    batches = []
+    for batch_i, batch in enumerate(batched(sorted_predictions, batch_size)):
+        batches.append(
+            pl.DataFrame({"prediction": batch}).with_columns(
+                pl.lit(batch_i).alias("batch")
+            )
+        )
+    logger.info(
+        f"Made {len(batches)} batches of {batch_size} predictions (last batch with {len(batches[-1])} predictions)"
+    )
+    return pl.concat(batches)
+
+
 @cache
-def read_batch_manifest():
-    manifest_path = checkpoints.make_batch_manifest.get().output.batch_manifest
-    table = pl.read_csv(manifest_path, separator="\t")
-    mapping = {row["prediction"]: row["batch"] for row in table.iter_rows(named=True)}
+def all_manifest_paths() -> list[str]:
+    return [
+        checkpoints.make_manifest.get(bait=bait, prey=prey).output.manifest
+        for bait in BAITS_NAMED
+        for prey in PREYS
+    ]
+
+
+@cache
+def manifests_for_batches() -> list[str]:
+    batch_manifests = []
+    done_preds = set(DB_PREDS)
+    for manifest_path in all_manifest_paths():
+        bait, prey = Path(manifest_path).parent.stem.split("__")
+        manifest_preds = set(read_pair_manifest(bait=bait, prey=prey))
+        if manifest_preds - done_preds:
+            batch_manifests.append(manifest_path)
+    return batch_manifests
+
+
+@cache
+def make_batch_mapping() -> MappingProxyType:
+    manifest_paths = manifests_for_batches()
+    batched_manifests = batch_manifests(manifest_paths)
+    mapping = {
+        row["prediction"]: row["batch"]
+        for row in batched_manifests.iter_rows(named=True)
+    }
     return MappingProxyType(mapping)
 
 
-def batch_per_prediction(wc):
-    manifest_mapping = read_batch_manifest()
+def batch_per_prediction(wc) -> str:
+    manifest_mapping = make_batch_mapping()
     batch_i = manifest_mapping[wc.prediction]
     return f"<scratch>/predictions/batch_{batch_i}"
 
 
 @cache
-def read_pair_manifest(bait, prey):
+def read_pair_manifest(bait: str, prey: str) -> tuple[str]:
     manifest_path = checkpoints.make_manifest.get(bait=bait, prey=prey).output.manifest
     return tuple(Path(manifest_path).read_text().strip().splitlines())
 
 
 @cache
-def confidences_for_pair(bait, prey):
+def confidences_for_pair(bait: str, prey: str) -> tuple[str]:
     predictions = read_pair_manifest(bait=bait, prey=prey)
     return tuple(
         expand(
@@ -138,16 +186,17 @@ def predictions_for_pair(bait, prey):
     )
 
 
-def all_predictions(wc):
-    preds = []
+def all_predictions(wc) -> list[str]:
+    preds = set()
     for bait in BAITS_NAMED:
         for prey in PREYS:
             pred_names = read_pair_manifest(bait=bait, prey=prey)
-            preds.extend([f"{DATABASE}/{n}.tar.zst" for n in pred_names])
-    return list(set(preds))
+            preds.update([f"{DATABASE}/{n}.tar.zst" for n in pred_names])
+    return list(preds)
 
 
 rule all:
+    default_target: True
     input:
         all_predictions,
         expand(
@@ -208,8 +257,6 @@ if STRUCTURE_BAITS:
             "<logs>/make_baits_from_structure/<pair_name>.log",
         wildcard_constraints:
             bait="|".join(Path(b).stem for b in STRUCTURE_BAITS),
-        conda:
-            f"{ENV_DIR}/base.yaml"
         run:
             uni_ids = get_uniprot_ids_from_struc(input.source)
             Path(output.accessions).write_text("\n".join(uni_ids) + "\n")
@@ -231,8 +278,8 @@ rule make_master_fasta:
         bait_lists=expand(
             f"{PAIR_DIR}/baits_accessions.txt", prey=PREYS, bait=BAITS_NAMED
         ),
-        uniprot_db=UNIPROT_LOCAL,
-        uniprot_idx=rules.make_uniprot_index.output.index,
+        uniprot_db=ancient(UNIPROT_LOCAL),
+        uniprot_idx=ancient(rules.make_uniprot_index.output.index),
     output:
         accessions="<work>/all_accessions.txt",
         fasta="<work>/all_chains.fasta",
@@ -246,8 +293,7 @@ rule make_master_fasta:
         for blist in input.bait_lists:
             baccesssions = Path(blist).read_text().strip().splitlines()
             all_accessions.update(baccesssions)
-        accession_index = "\n".join(all_accessions)
-        Path(output.accessions).write_text(accession_index)
+        Path(output.accessions).write_text("\n".join(all_accessions))
         fasta = fetch_uniprot_fasta(all_accessions, input.uniprot_idx)
         Path(output.fasta).write_text(fasta)
         index_fasta(fasta_path=output.fasta, idx_path=output.fasta_index)
@@ -255,7 +301,7 @@ rule make_master_fasta:
 
 rule make_prey_fasta_per_pair:
     input:
-        fasta_index=rules.make_master_fasta.output.fasta_index,
+        fasta_index=ancient(rules.make_master_fasta.output.fasta_index),
     output:
         prey_fasta="<pair_dir>/prey.fasta",
     log:
@@ -269,7 +315,7 @@ rule make_prey_fasta_per_pair:
 
 rule make_baits_fasta_per_pair:
     input:
-        fasta_index=rules.make_master_fasta.output.fasta_index,
+        fasta_index=ancient(rules.make_master_fasta.output.fasta_index),
         baits_accessions="<pair_dir>/baits_accessions.txt",
     output:
         baits_fasta="<pair_dir>/baits.fasta",
@@ -289,10 +335,11 @@ checkpoint make_manifest:
         baits_fasta="<pair_dir>/baits.fasta",
     output:
         manifest="<pair_dir>/prediction_manifest.txt",
-    priority: 10
+    priority: 100
     params:
         max_len=config.get("total_max_res", 2549),
         database=DATABASE,
+        done_preds=DB_PREDS,
     run:
         prey_name, prey_seq = next(iter(fasta_to_dict(input.prey_fasta).items()))
         baits = fasta_to_dict(input.baits_fasta)
@@ -301,59 +348,19 @@ checkpoint make_manifest:
             name = "__".join(sorted([prey_name, bait_name]))
             if (
                 (total_len := len(prey_seq) + len(bait_seq)) > params.max_len
-            ) and not Path(f"{params.database}/{name}.tar.zst").exists():
+            ) and name not in params.done_preds:
                 logger.warning(
-                    f"Skipped pair {name} (doesn't exist already and it's too long - {total_len} residues total, max is {params.max_len})"
+                    f"Skipped pair {name} (doesn't already exist and it's too long - {total_len} residues total, max is {params.max_len})"
                 )
                 continue
             predictions.append(name)
-        Path(output.manifest).write_text("\n".join(predictions) + "\n")
-
-
-checkpoint make_batch_manifest:
-    input:
-        fasta=rules.make_master_fasta.output.fasta,
-        manifests=expand(
-            f"{PAIR_DIR}/prediction_manifest.txt", bait=BAITS_NAMED, prey=PREYS
-        ),
-    output:
-        batch_manifest=temp("<scratch>/missing_jsons/batched_manifest.tsv"),
-        chains=temp("<scratch>/missing_jsons/chains.json"),
-    log:
-        "<logs>/make_batch_manifest.log",
-    params:
-        batch_size=PREDICTION_BATCH_SIZE,
-    run:
-        requested_predictions = set()
-        requested_chains = set()
-        for m in input.manifests:
-            for pred in Path(m).read_text().strip().splitlines():
-                if spred := pred.strip():
-                    requested_predictions.add(spred)
-                    requested_chains.update(spred.split("__"))
-        prots = fasta_to_dict(input.fasta)
-        prots = {k: v for k, v in prots.items() if k in requested_chains}
-        Path(output.chains).write_text(json.dumps(prots, indent=4))
-        sorted_predictions = sorted(requested_predictions)
-        batches = []
-        for batch_i, batch in enumerate(
-            batched(sorted_predictions, params.batch_size)
-        ):
-            batches.append(
-                pl.DataFrame({"prediction": batch}).with_columns(
-                    pl.lit(batch_i).alias("batch")
-                )
-            )
-        logger.info(
-            f"Made {len(batches)} batches of {params.batch_size} predictions (last batch with {len(batches[-1])} predictions)"
-        )
-        pl.concat(batches).write_csv(output.batch_manifest, separator="\t")
+        Path(output.manifest).write_text("\n".join(predictions))
 
 
 rule make_json_batch:
     input:
-        manifest=lambda wc: checkpoints.make_batch_manifest.get().output.batch_manifest,
-        chains=lambda wc: checkpoints.make_batch_manifest.get().output.chains,
+        manifests=manifests_for_batches,
+        fasta=ancient(rules.make_master_fasta.output.fasta),
     output:
         json_temp=temp(
             directory("<scratch>/missing_jsons/batch_{batch}"), group_jobs=True
@@ -363,13 +370,10 @@ rule make_json_batch:
     run:
         json_batch_dir = Path(output.json_temp)
         json_batch_dir.mkdir(exist_ok=True, parents=True)
-        with open(input.chains) as f:
-            prots = json.load(f)
-        manifest = pl.scan_csv(input.manifest, separator="\t")
+        prots = fasta_to_dict(input.fasta)
+        manifest = batch_manifests(input.manifests)
         prediction_batch = (
-            manifest.filter(
-                pl.col("batch").cast(pl.Int64).eq(int(wildcards.batch))
-            ).collect()
+            manifest.filter(pl.col("batch").cast(pl.Int64).eq(int(wildcards.batch)))
         )["prediction"].to_list()
         for req_pred in prediction_batch:
             p1, p2 = req_pred.split("__")
@@ -437,7 +441,9 @@ rule archive_predictions:
         ),
     output:
         archive=update("<database>/{prediction}.tar.zst"),
-    priority: 5
+    log:
+        "<logs>/archive_predictions/{prediction}.log",
+    priority: 20
     shell:
         r"""
         exec > >(tee {log}) 2>&1
@@ -635,7 +641,7 @@ rule summarize_all:
             prey=PREYS,
         ),
     output:
-        summary_table=update("<work>/summary_metrics.tsv"),
+        summary_table="<work>/summary_metrics.tsv",
     log:
         "<logs>/summarize_screens.log",
     conda:

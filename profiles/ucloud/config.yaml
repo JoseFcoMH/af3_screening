@@ -41,7 +41,7 @@ set-resources:
 
   get_and_plot_metrics:
     mem_mb: 16000
-    cpus_per_task: 2
+    cpus_per_task: 16
 
   project_screen:
     cpus_per_task: 4
@@ -49,5 +49,5 @@ set-resources:
 set-threads:
   run_alphafast: 32
   map_prediction_to_structure: 16
-  get_and_plot_metrics: 4
+  get_and_plot_metrics: 16
   project_screen: 4
