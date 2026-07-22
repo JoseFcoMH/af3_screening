@@ -76,6 +76,7 @@ pathvars:
     pair_name="{bait}__{prey}",
     pair_dir="<work>/<pair_name>",
     pair_output="<pair_dir>/processed_output",
+    pair_scratch="<scratch>/prediction_data/<pair_name>",
 
 
 def modules_for(rule_name):
@@ -151,34 +152,34 @@ def read_pair_manifest(bait: str, prey: str) -> tuple[str]:
     return tuple(Path(manifest_path).read_text().strip().splitlines())
 
 
-@cache
-def confidences_for_pair(bait: str, prey: str) -> tuple[str]:
+def confidences_for_pair(wc) -> list[str]:
+    bait, prey = wc.bait, wc.prey
     predictions = read_pair_manifest(bait=bait, prey=prey)
-    return tuple(
-        expand(
-            "<scratch>/prediction_data/{prediction}/{prediction}_confidences.json",
-            prediction=predictions,
-        )
-    )
-
-
-def models_for_pair(wc):
-    predictions = read_pair_manifest(bait=wc.bait, prey=wc.prey)
     return expand(
-        "<scratch>/prediction_data/{prediction}/{prediction}_model.cif",
+        "<pair_scratch>/{prediction}/{prediction}_confidences.json",
         prediction=predictions,
     )
 
 
-def summaries_for_pair(wc):
-    predictions = read_pair_manifest(bait=wc.bait, prey=wc.prey)
+def models_for_pair(wc) -> list[str]:
+    bait, prey = wc.bait, wc.prey
+    predictions = read_pair_manifest(bait=bait, prey=prey)
     return expand(
-        "<scratch>/prediction_data/{prediction}/{prediction}_summary_confidences.json",
+        "<pair_scratch>/{prediction}/{prediction}_model.cif",
         prediction=predictions,
     )
 
 
-def predictions_for_pair(bait, prey):
+def summaries_for_pair(wc) -> list[str]:
+    bait, prey = wc.bait, wc.prey
+    predictions = read_pair_manifest(bait=bait, prey=prey)
+    return expand(
+        "<pair_scratch>/{prediction}/{prediction}_summary_confidences.json",
+        prediction=predictions,
+    )
+
+
+def predictions_for_pair(bait, prey) -> list[str]:
     predictions = read_pair_manifest(bait=bait, prey=prey)
     return expand(
         "<database>/{prediction}.tar.zst",
@@ -412,7 +413,7 @@ rule run_alphafast_batch:
         exec > >(tee {log}) 2>&1
         set -euo pipefail
 
-        mkdir -p {output.predictions}
+        mkdir -p {output.predictions:q}
 
         export SINGULARITYENV_XLA_FLAGS="--xla_disable_hlo_passes=custom-kernel-fusion-rewriter"
         export APPTAINERENV_XLA_FLAGS="--xla_disable_hlo_passes=custom-kernel-fusion-rewriter"
@@ -420,14 +421,14 @@ rule run_alphafast_batch:
         {params.modules}
 
         {params.af_scriptdir}/run_alphafast.sh \
-            --input_dir {input.json_temp} \
-            --output_dir {output.predictions} \
-            --container {params.af_container} \
-            --backend {params.af_backend} \
-            --db_dir {params.af_db_dir} \
-            --weights_dir {params.af_weights_dir} \
-            --temp_dir {params.af_temp_dir} \
-            --jax_compilation_cache_dir {params.af_jax_dir} \
+            --input_dir {input.json_temp:q} \
+            --output_dir {output.predictions:q} \
+            --container {params.af_container:q} \
+            --backend {params.af_backend:q} \
+            --db_dir {params.af_db_dir:q} \
+            --weights_dir {params.af_weights_dir:q} \
+            --temp_dir {params.af_temp_dir:q} \
+            --jax_compilation_cache_dir {params.af_jax_dir:q} \
             --gpu_devices {params.af_gpu_devices}
         """
 
@@ -474,19 +475,19 @@ rule get_predictions:
         ),
     output:
         confidences=temp(
-            "<scratch>/prediction_data/{prediction}/{prediction}_confidences.json",
+            "<pair_scratch>/{prediction}/{prediction}_confidences.json",
             group_jobs=True,
         ),
         summary_confidences=temp(
-            "<scratch>/prediction_data/{prediction}/{prediction}_summary_confidences.json",
+            "<pair_scratch>/{prediction}/{prediction}_summary_confidences.json",
             group_jobs=True,
         ),
         model=temp(
-            "<scratch>/prediction_data/{prediction}/{prediction}_model.cif",
+            "<pair_scratch>/{prediction}/{prediction}_model.cif",
             group_jobs=True,
         ),
     log:
-        "<logs>/get_predictions/{prediction}.log",
+        "<logs>/get_predictions/<pair_name>/{prediction}.log",
     priority: -50
     params:
         out_dir=lambda wc, output: str(Path(output.confidences).parent),
@@ -506,7 +507,7 @@ rule get_predictions:
 
 rule get_and_plot_metrics:
     input:
-        confs=lambda wc: confidences_for_pair(bait=wc.bait, prey=wc.prey),
+        confs=confidences_for_pair,
         models=models_for_pair,
         summaries=summaries_for_pair,
     output:
@@ -554,7 +555,7 @@ rule get_and_plot_metrics:
 
 rule map_prediction_to_structure:
     input:
-        confs=lambda wc: confidences_for_pair(bait=wc.bait, prey=wc.prey),
+        confs=confidences_for_pair,
         cif_structure=lambda wc: BAITS_DICT[wc.bait],
     output:
         attr_file="<pair_output>/{bait}__{prey}.defattr",
@@ -608,7 +609,7 @@ EOF
 
 rule project_screen:
     input:
-        confs=lambda wc: confidences_for_pair(bait=wc.bait, prey=wc.prey),
+        confs=confidences_for_pair,
     output:
         out_table="<pair_output>/projected_icp.tsv",
     log:
