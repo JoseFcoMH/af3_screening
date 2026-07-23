@@ -406,7 +406,7 @@ checkpoint make_project_manifest:
 
 rule make_json_batch:
     input:
-        manifests=manifests_for_batches,
+        manifests=lambda wc: manifests_for_batches(),
         fasta=ancient(rules.make_master_fasta.output.fasta),
     output:
         json_temp=temp(
