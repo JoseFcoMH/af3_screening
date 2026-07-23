@@ -33,9 +33,10 @@ protein_drug_template = {
 
 
 UNIPROT_ACCESSION_RE = re.compile(
-    r"^(?:[OPQ][0-9][A-Z0-9]{3}[0-9]|"
+    r"^(?:"
+    r"[OPQ][0-9][A-Z0-9]{3}[0-9]|"
     r"[A-NR-Z][0-9][A-Z][A-Z0-9]{2}[0-9]"
-    r"(?:-[0-9]+)?)$"
+    r")(?:-[1-9][0-9]*)?$"
 )
 
 

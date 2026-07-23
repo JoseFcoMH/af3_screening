@@ -46,11 +46,13 @@ PREDICTION_BATCH_SIZE = int(config.get("prediction_batch_size", 4000))
 DB_PATHS = list(Path(config["predictions_database"]).glob("*.tar.zst"))
 DB_PREDS = [p.stem.split(".")[0] for p in DB_PATHS]
 
-BAITS = STRUCTURE_BAITS + PROTEINLIST_BAITS
+BAITS = sorted(set(STRUCTURE_BAITS + PROTEINLIST_BAITS))
 BAITS_DICT = {Path(b).stem: b for b in BAITS}
-BAITS_NAMED = list(BAITS_DICT.keys())
+BAITS_NAMED = sorted(list(BAITS_DICT.keys()))
 
-PREYS = Path(config.get("proteins_screened")).read_text().strip().splitlines()
+PREYS = sorted(
+    set(Path(config.get("proteins_screened")).read_text().strip().splitlines())
+)
 
 
 logger.info(f"Got PREYS: {PREYS}")
@@ -109,24 +111,15 @@ def batch_manifests(
     return pl.concat(batches)
 
 
-@cache
-def all_manifest_paths() -> list[str]:
-    return [
-        checkpoints.make_manifest.get(bait=bait, prey=prey).output.manifest
-        for bait in BAITS_NAMED
-        for prey in PREYS
-    ]
-
-
-@cache
 def manifests_for_batches() -> list[str]:
-    batch_manifests = []
-    done_preds = set(DB_PREDS)
-    for manifest_path in all_manifest_paths():
-        bait, prey = Path(manifest_path).parent.stem.split("__")
-        manifest_preds = set(read_pair_manifest(bait=bait, prey=prey))
-        if manifest_preds - done_preds:
-            batch_manifests.append(manifest_path)
+    manifest_path = checkpoints.make_project_manifest.get().output.project_manifest
+    manifest = pl.scan_csv(manifest_path, separator="\t")
+    manifest_missing_preds = (
+        manifest.filter(~pl.col("pair").is_in(DB_PREDS))
+        .select("from_manifest")
+        .unique("from_manifest", maintain_order=True)
+    )
+    batch_manifests = manifest_missing_preds.collect()["from_manifest"].to_list()
     return batch_manifests
 
 
@@ -149,8 +142,11 @@ def batch_per_prediction(wc) -> str:
 
 @cache
 def read_pair_manifest(bait: str, prey: str) -> tuple[str]:
-    manifest_path = checkpoints.make_manifest.get(bait=bait, prey=prey).output.manifest
-    return tuple(Path(manifest_path).read_text().strip().splitlines())
+    manifest_path = checkpoints.make_project_manifest.get().output.project_manifest
+    manifest = pl.scan_csv(manifest_path, separator="\t")
+    pair_manifest = manifest.filter(pl.col("prey").eq(prey) & pl.col("bait").eq(bait))
+    pair_predictions = pair_manifest.collect()["prediction"].to_list()
+    return tuple(pair_predictions)
 
 
 def confidences_for_pair(wc) -> list[str]:
@@ -194,7 +190,7 @@ def all_predictions(wc) -> list[str]:
         for prey in PREYS:
             pred_names = read_pair_manifest(bait=bait, prey=prey)
             preds.update([f"{DATABASE}/{n}.tar.zst" for n in pred_names])
-    return list(preds)
+    return sorted(preds)
 
 
 rule all:
@@ -244,7 +240,8 @@ if PROTEINLIST_BAITS:
             exec > >(tee {log:q}) 2>&1
             set -euo pipefail
 
-            cp {input.source} {output.accessions}
+            sort -u {input.source:q} >{output.accessions:q}
+            echo "Number of unique IDs in {output.accessions:q}: $(wc -l {output.accessions:q})"
             """
 
 
@@ -298,8 +295,9 @@ rule make_master_fasta:
             for blist in input.bait_lists:
                 baccesssions = Path(blist).read_text().strip().splitlines()
                 all_accessions.update(baccesssions)
-            Path(output.accessions).write_text("\n".join(all_accessions))
-            fasta = fetch_uniprot_fasta(all_accessions, input.uniprot_idx)
+            sorted_accessions = sorted(all_accessions)
+            Path(output.accessions).write_text("\n".join(sorted_accessions))
+            fasta = fetch_uniprot_fasta(sorted_accessions, input.uniprot_idx)
             Path(output.fasta).write_text(fasta)
             index_fasta(fasta_path=output.fasta, idx_path=output.fasta_index)
 
@@ -336,7 +334,7 @@ rule make_baits_fasta_per_pair:
             Path(output.baits_fasta).write_text(baits_fasta)
 
 
-checkpoint make_manifest:
+rule make_manifest:
     input:
         prey_fasta="<pair_dir>/prey.fasta",
         baits_fasta="<pair_dir>/baits.fasta",
@@ -368,6 +366,42 @@ checkpoint make_manifest:
                 predictions.append(name)
             logger.info(f"Wrote {len(predictions)} entries in manifest.")
             Path(output.manifest).write_text("\n".join(predictions))
+
+
+checkpoint make_project_manifest:
+    input:
+        manifests=expand(
+            f"{PAIR_DIR}/prediction_manifest.txt",
+            bait=BAITS_NAMED,
+            prey=PREYS,
+        ),
+    output:
+        project_manifest="<work>/project_manifest.tsv",
+    log:
+        "<logs>/make_project_manifest.log",
+    run:
+        with rule_logger(logfile=log[0], rule_name=rule) as logger:
+            logger.info(f"Found {len(input.manifests)} manifests to concatenate.")
+            manifest_tables = []
+            for mani in input.manifests:
+                bait, prey = Path(mani).parent.name.split("__")
+                mani_content = Path(mani).read_text().strip().splitlines()
+                mani_table = pl.DataFrame(
+                    {"prediction": mani_content}
+                ).with_columns(
+                    pl.lit(str(mani)).alias("from_manifest"),
+                    pl.lit(bait).alias("bait"),
+                    pl.lit(prey).alias("prey"),
+                    pl.lit(f"{bait}__{prey}").alias("pair"),
+                )
+                manifest_tables.append(mani_table)
+            project_manifest = pl.concat(manifest_tables).sort(
+                ["from_manifest", "pair", "prediction"]
+            )
+            project_manifest.write_csv(output.project_manifest, separator="\t")
+            logger.info(
+                f"Found {len(project_manifest)} requested predictions, {len(project_manifest.unique('prediction'))} of them unique."
+            )
 
 
 rule make_json_batch:
@@ -668,7 +702,7 @@ rule summarize_all:
             tables = [pl.scan_csv(t, separator="\t") for t in input.tables]
             summary = (
                 pl.concat(tables)
-                .unique("pair")
+                .unique("pair", maintain_order=True)
                 .sort("ipSAE", descending=True)
                 .collect()
             )
