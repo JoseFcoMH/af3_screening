@@ -106,7 +106,7 @@ def batch_manifests(
             )
         )
     logger.info(
-        f"Made {len(batches)} batches of {batch_size} predictions (last batch with {len(batches[-1])} predictions)"
+        f"Made {len(batches)} batches of {len(batches[0])} predictions (last batch with {len(batches[-1])} predictions)"
     )
     return pl.concat(batches)
 
@@ -342,7 +342,6 @@ rule make_manifest:
         manifest="<pair_dir>/prediction_manifest.txt",
     log:
         "<logs>/make_manifests/<pair_name>.log",
-    priority: 100
     params:
         max_len=config.get("total_max_res", 2549),
         database=DATABASE,
@@ -379,6 +378,7 @@ checkpoint make_project_manifest:
         project_manifest="<work>/project_manifest.tsv",
     log:
         "<logs>/make_project_manifest.log",
+    priority: 100
     run:
         with rule_logger(logfile=log[0], rule_name=rule) as logger:
             logger.info(f"Found {len(input.manifests)} manifests to concatenate.")
@@ -605,6 +605,7 @@ rule get_and_plot_metrics:
 rule map_prediction_to_structure:
     input:
         confs=confidences_for_pair,
+        models=models_for_pair,
         cif_structure=lambda wc: BAITS_DICT[wc.bait],
     output:
         attr_file="<pair_output>/{bait}__{prey}.defattr",
@@ -612,15 +613,19 @@ rule map_prediction_to_structure:
         "<logs>/map_prediction_to_structure/<pair_name>.log",
     conda:
         f"{ENV_DIR}/base.yaml"
+    params:
+        prediction_dirs=lambda wc, input: [
+            str(Path(model).parent) for model in input.models
+        ],
     shell:
         r"""
         exec > >(tee {log:q}) 2>&1
         set -euo pipefail
 
         python {SCRIPT_DIR}/project_to_structure.py \
-            --af3_list {input.confs} \
-            --out_file {output.attr_file} \
-            --cif_file {input.cif_structure} \
+            --af3_list {params.prediction_dirs:q} \
+            --out_file {output.attr_file:q} \
+            --cif_file {input.cif_structure:q} \
             --n_cpus {threads} \
             --reference_chain {wildcards.prey}
         """

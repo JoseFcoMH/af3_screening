@@ -169,7 +169,7 @@ def main():
         required=True,
         nargs="+",
         type=Path,
-        help="Confidence jsons from predictions to align",
+        help="Prediction output directories, each containing a _model.cif and a _confidences.json",
     )
     parser.add_argument(
         "--reference_chain", required=True, type=str, help="Chain to project"
@@ -199,8 +199,7 @@ def main():
     refSeqs = extract_sequences_from_cif(cif_file)
     cif_name = cif_file.stem
 
-    results = [r.parent for r in in_args.af3_list]
-    results.sort()
+    results = sorted(in_args.af3_list)
 
     logger.info(f"Found {len(results)} predictions. Loading and processing...")
 
