@@ -155,7 +155,7 @@ def records_from_api(accessions: list[str]) -> str:
 
     logger.info(f"Retrieved {len(returned)} UniProt sequence(s)")
 
-    if (len(fasta) < 2) or (fasta[0][0] != ">"):
+    if (len(returned) > 0) and (fasta[0][0] != ">"):
         logger.error(f"Fasta has a bad format: \n{fasta}")
         raise ValueError("Bad API response")
 
@@ -188,6 +188,7 @@ def fetch_uniprot_fasta(
         )
         fasta += local_fasta
     if len(missing_accessions) > 0:
+        logger.info(f"Requesting {missing_accessions} from uniprot API.")
         fasta += records_from_api(accessions=missing_accessions)
 
     return fasta
