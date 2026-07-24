@@ -2,7 +2,7 @@
 
 A snakemake workflow to screen protein-protein interactions between a list of "preys" and all proteins in one or more lists or "baits". The baits may come from a .cif structure, in which case the per-residue prey contact probability will be projected on the structure.
 
-Uses a modified [ipSAE](###ipSAE) calculation script to allow specifying an output dir and modified [Alphafast](###Alphafast) to allow udocker (optional)
+Uses a modified [ipSAE](###ipSAE) calculation script to allow specifying an output dir and forked [Alphafast](https://github.com/JoseFcoMH/alphafast) to allow udocker (optional, may use [original](###Alphafast) if udocker is not needed)
 
 # References
 
