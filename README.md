@@ -9,7 +9,7 @@ Uses a modified [ipSAE](###ipSAE) calculation script to allow specifying an outp
 - Conda
 - The workflow must be run from a conda env with:
   - Python >= 3.10
-  - Snakemake
+  - Snakemake >= 9
   - Biopython
   - Polars
 
