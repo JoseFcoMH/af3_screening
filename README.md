@@ -7,7 +7,7 @@ Uses a modified [ipSAE](###ipSAE) calculation script to allow specifying an outp
 # Dependencies
 - Docker, UDocker or Singularity to run the Alphafast container
 - Conda
-- The workflow must be run from a conda env with:
+- The workflow must be run from an env with:
   - Python >= 3.10
   - Snakemake >= 9
   - Biopython
