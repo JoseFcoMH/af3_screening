@@ -6,6 +6,7 @@ Uses a modified [ipSAE](###ipSAE) calculation script to allow specifying an outp
 
 # Dependencies
 - Docker, UDocker or Singularity to run the Alphafast container
+- ChimeraX if projecting to a structure
 - Conda
 - The workflow must be run from an env with:
   - Python >= 3.10
