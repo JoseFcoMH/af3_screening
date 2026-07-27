@@ -15,11 +15,11 @@ def load_ipsae(ipsae_dir: Path) -> pl.DataFrame:
     ipsae_raw = []
     for f in files:
         logger.debug(f"On file {f}")
-        new_df = pl.from_pandas(pd.read_csv(f, sep=r"\s+"))
-        if len(new_df) > 0:
+        try:
+            new_df = pl.from_pandas(pd.read_csv(f, sep=r"\s+"))
             ipsae_raw.append(new_df)
-        else:
-            logger.warning(f"Skipped {f} (could not read table)")
+        except pd.errors.EmptyDataError:
+            logger.warning(f"Skipped {f} (cannot read empty table)")
 
     ipsae_raw = pl.concat(ipsae_raw)
 

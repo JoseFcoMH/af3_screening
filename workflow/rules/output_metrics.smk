@@ -77,7 +77,7 @@ rule get_and_plot_metrics:
                 jpair="$pair_dir/${{pair_name}}_confidences.json"
 
                 # echo "Calculating metrics for $pair_name"
-                python "$ipsae_script" "$jpair" "$model" 10 10 {params.ipsae_dir:q}
+                python "$ipsae_script" "$jpair" "$model" 10 10 {params.ipsae_dir:q} || echo "WARNING: ipSAE calculation failed for $pair_name"
             ' _ "{SCRIPT_DIR}/ipsae.py"
 
         python {SCRIPT_DIR}/ipsae_viz_af3.py \
