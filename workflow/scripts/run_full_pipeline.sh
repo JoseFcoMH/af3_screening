@@ -14,7 +14,7 @@ TMP_RUN="${TMP_ROOT}/${RUN_NAME}"
 
 WORKDIR="/work/datadir/af3_runs/${RUN_NAME}"
 CONFIG="${WORKDIR}/pipeline_inputs/ucloud_config.yaml"
-PROFILE="/work/repos/af3_screening/workflow/profiles/ucloud"
+PROFILE="/work/repos/af3_screening/profiles/ucloud"
 LOG="${WORKDIR}/pipeline_inputs/pipeline.log"
 
 cleanup() {
