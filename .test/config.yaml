@@ -1,9 +1,10 @@
-reference_proteins: from_proteinlist/proteinlists.txt 
-proteins_screened: from_proteinlist/preys.txt
+reference_proteins: proteinlists.txt 
+reference_structures: structurelist.txt
+proteins_screened: preys.txt
 
 total_max_res: 4000
 
-work_dir: from_proteinlist
+work_dir: .test
 scratch_dir : /tmp/af3_pipeline/test
 predictions_database: /tmp/af3_pipeline/test/test_db
 uniprot_path: /tmp/af3_pipeline/test/uniprot_db/uniprot_sprot.fasta
