@@ -1,2 +1,2 @@
-from_proteinlists/baits1.txt
-from_proteinlists/baits2.txt
+from_proteinlist/baits1.txt
+from_proteinlist/baits2.txt
