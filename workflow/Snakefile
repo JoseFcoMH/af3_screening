@@ -35,9 +35,7 @@ BAITS = sorted(set(STRUCTURE_BAITS + PROTEINLIST_BAITS))
 BAITS_DICT = {Path(b).stem: b for b in BAITS}
 BAITS_NAMED = sorted(list(BAITS_DICT.keys()))
 
-PREYS = sorted(
-    set(Path(config.get("proteins_screened")).read_text().strip().splitlines())
-)
+PREYS = sorted(set(Path(config["proteins_screened"]).read_text().strip().splitlines()))
 
 
 logger.info(f"Got PREYS: {PREYS}")
