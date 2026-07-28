@@ -1,17 +1,21 @@
-reference_structures: /work/datadir/af3_runs/pipeline_test/structures.txt
-proteins_screened: /work/datadir/af3_runs/pipeline_test/preys.txt
+reference_proteins: /work/datadir/af3_runs/example/pipeline_inputs/proteinlists.txt 
+reference_structures: /work/datadir/af3_runs/example/pipeline_inputs/structures.txt
+proteins_screened: /work/datadir/af3_runs/example/pipeline_inputs/preys.txt
 
-total_max_res: 3200
+total_max_res: 4000
 
-work_dir: /work/datadir/af3_runs/pipeline_test
+work_dir: /work/datadir/af3_runs/example/pipeline_outputs
+scratch_dir : /tmp/af3_pipeline/example
+predictions_database: /work/datadir/af3_runs/predictions_database
+uniprot_path: /work/datadir/uniprot_db/uniprot_sprot.fasta
 
 alphafast:
   script_dir: /work/repos/alphafast/scripts
   container: romerolabduke/alphafast:latest
   db_dir: /work/datadir/mmseqs2_dbs
   weights_dir: /work/datadir/
-  temp_dir: /tmp/alphafast_tmp
-  jax_compilation_cache_dir: /tmp/alphafast_jax_cache
+  temp_dir: /tmp/alphafast_tmp_example
+  jax_compilation_cache_dir: /tmp/alphafast_jax_cache_example
   backend: udocker
   gpu_devices: "0,1,2,3"
 
