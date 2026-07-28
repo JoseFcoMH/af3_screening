@@ -13,6 +13,10 @@ ENV_DIR = str(SNAKEFILE_DIR / "envs")
 CONFIG_DIR = str(SNAKEFILE_DIR / "config")
 RULE_DIR = str(SNAKEFILE_DIR / "rules")
 
+if exists("config.yaml"):
+
+    configfile: "config.yaml"
+
 
 STRUCTURE_BAITS = []
 PROTEINLIST_BAITS = []
