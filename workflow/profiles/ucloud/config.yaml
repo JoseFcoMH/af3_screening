@@ -5,6 +5,7 @@ keep-going: true
 keep-incomplete: false
 rerun-incomplete: true
 rerun-triggers:
+  - input
   - mtime
   - params
 quiet:
