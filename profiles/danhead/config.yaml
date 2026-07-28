@@ -1,0 +1,44 @@
+executor: slurm
+jobs: 40
+use-conda: true
+printshellcmds: true
+keep-going: false
+rerun-incomplete: true
+
+cores: 26
+
+resources:
+  - mem_mb=512000
+  - cpus_per_task=24
+  - uses_gpu=1
+
+default-resources:
+  - runtime=30m
+  - cpus_per_task=1
+  - mem_per_cpu=4096
+
+set-resources:
+  run_alphafast:
+    mem_mb: 128000
+    cpus_per_task: 8
+    runtime: 6d
+    uses_gpu: 1
+    gres: "gpu:1"
+    slurm_partition: "gpuqueue"
+
+  map_prediction_to_structure:
+    mem_mb: 64000
+    cpus_per_task: 8
+
+  get_and_plot_metrics:
+    mem_mb: 16000
+    cpus_per_task: 2
+
+  project_screen:
+    cpus_per_task: 2
+
+set-threads:
+  run_alphafast: 8
+  map_prediction_to_structure: 8
+  get_and_plot_metrics: 2
+  project_screen: 2
