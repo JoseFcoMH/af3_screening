@@ -14,9 +14,6 @@ CONFIG_DIR = str(SNAKEFILE_DIR / "config")
 RULE_DIR = str(SNAKEFILE_DIR / "rules")
 
 
-configfile: f"{CONFIG_DIR}/config.yaml"
-
-
 STRUCTURE_BAITS = []
 PROTEINLIST_BAITS = []
 
@@ -52,12 +49,13 @@ DATABASE = config["predictions_database"]
 PAIR_NAME = "{bait}__{prey}"
 PAIR_DIR = f"<work>/{PAIR_NAME}"
 PAIR_OUTPUT = f"{PAIR_DIR}/processed_output"
+WORK_DIR = config.get("work_dir")
 
 
 pathvars:
     database=DATABASE,
     scratch=SCRATCH,
-    work=config.get("work_dir"),
+    work=WORK_DIR,
     logs="<work>/logs",
     pair_name="{bait}__{prey}",
     pair_dir="<work>/<pair_name>",
