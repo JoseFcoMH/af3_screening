@@ -73,7 +73,7 @@ rule run_alphafast_batch:
             --input_dir {input.json_temp:q} \
             --output_dir {output.predictions:q} \
             --container {params.af_container:q} \
-            --backend {params.af_backend:q} \
+            --backend {params.af_backend} \
             --db_dir {params.af_db_dir:q} \
             --weights_dir {params.af_weights_dir:q} \
             --temp_dir {params.af_temp_dir:q} \
