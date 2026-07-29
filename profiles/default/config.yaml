@@ -1,0 +1,5 @@
+jobs: 500
+use-conda: true
+resources:
+  af_batch_slots: 1
+  api_request: 1

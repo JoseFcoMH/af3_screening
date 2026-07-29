@@ -35,8 +35,43 @@ rule make_json_batch:
                 path.write_text(json.dumps(dimer, indent=4))
 
 
+rule setup_mmseqs:
+    output:
+        af_run_script=str(
+            Path(config.get("af_repo_dir", "<scratch>/alphafast/repo"))
+            / "scripts/run_alphafast.sh"
+        ),
+        mmseqs_sentinel=str(
+            Path(config.get("af_mmseqs_db", "<scratch>/alphafast/mmseqs"))
+            / "mmseqs/uniprot_padded.dbtype"
+        ),
+    log:
+        "<logs>/setup_alphafast.log",
+    conda:
+        ENVS["udocker"]
+    params:
+        repo_parent=lambda wc, output: str(Path(output.af_repo_dir).parent),
+        af_repo=config.get("af_repo", "https://github.com/JoseFcoMH/alphafast.git"),
+        mmseqs_dir=lambda wc, output: str(Path(output.mmseqs_db).parent.parent),
+    shell:
+        r"""
+        exec > >(tee {log:q}) 2>&1
+        set -euo pipefail
+
+        echo "=== Copying repo ==="
+        cd {params.repo_parent:q}
+        git clone {params.af_repo:q}
+        cd {output.af_repo_dir:q}
+
+        echo "=== Setting up mmseqs database ==="
+        ./scripts/setup_databases.sh {output.mmseqs_dir:q} --protein-only
+        """
+
+
 rule run_alphafast_batch:
     input:
+        af_repo_dir=ancient(rules.setup_mmseqs.output.af_run_script),
+        mmseqs_db=ancient(rules.setup_mmseqs.output.mmseqs_sentinel),
         json_temp=rules.make_json_batch.output.json_temp,
     output:
         predictions=temp(
@@ -50,31 +85,29 @@ rule run_alphafast_batch:
     resources:
         af_batch_slots=1,
     params:
-        af_scriptdir=config["alphafast"]["script_dir"],
-        af_container=config["alphafast"]["container"],
-        af_backend=config["alphafast"].get("backend", "udocker"),
-        af_db_dir=config["alphafast"]["db_dir"],
-        af_weights_dir=config["alphafast"]["weights_dir"],
-        af_temp_dir=config["alphafast"]["temp_dir"],
-        af_jax_dir=config["alphafast"]["jax_compilation_cache_dir"],
-        af_gpu_devices=config["alphafast"].get("gpu_devices", "0"),
+        weights_dir=config["af_weights_dir"],
+        container=config.get("af_container", "romerolabduke/alphafast:latest"),
+        backend=config.get("af_backend", "udocker"),
+        temp_dir=str(Path(SCRATCH) / "alphafast"),
+        jax_dir=str(Path(SCRATCH) / "jax"),
+        gpu_devices=config.get("gpu_devices", "0"),
     shell:
-        """
+        r"""
         exec > >(tee {log:q}) 2>&1
         set -euo pipefail
 
         mkdir -p {output.predictions:q}
 
-        {params.af_scriptdir}/run_alphafast.sh \
+        {input.af_run_script} \
             --input_dir {input.json_temp:q} \
             --output_dir {output.predictions:q} \
-            --container {params.af_container:q} \
-            --backend {params.af_backend} \
-            --db_dir {params.af_db_dir:q} \
-            --weights_dir {params.af_weights_dir:q} \
-            --temp_dir {params.af_temp_dir:q} \
-            --jax_compilation_cache_dir {params.af_jax_dir:q} \
-            --gpu_devices {params.af_gpu_devices}
+            --container {params.container:q} \
+            --backend {params.backend} \
+            --db_dir {input.mmseqs_db:q} \
+            --weights_dir {params.weights_dir:q} \
+            --temp_dir {params.temp_dir:q} \
+            --jax_compilation_cache_dir {params.jax_dir:q} \
+            --gpu_devices {params.gpu_devices}
         """
 
 

@@ -17,7 +17,7 @@ resources:
   - mem_mb=1024000
   - cpus_per_task=192
   - uses_gpu=4
-  - api_requests=4
+  - api_requests=1
   - af_batch_slots=1
 
 default-resources:
