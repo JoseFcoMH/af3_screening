@@ -23,13 +23,6 @@ alphafast:
   jax_compilation_cache_dir: /tmp/alphafast_jax_cache_test
   backend: udocker
   gpu_devices: "0"
-
-modules:
-  apply_defattr:
-    - chimerax
-
-  run_alphafast:
-    - udocker
 ```
 
 ### Params
@@ -53,5 +46,3 @@ The main ones are:
   - **uniprot_path**: path where uniprot-swissprot will be saved to.
 
 The alphafast params mirror those described in the [alphafast documentation](https://github.com/RomeroLab/alphafast).
-
-Modules can be specified per-rule, so that the rule will load them using `module load <module>`

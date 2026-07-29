@@ -13,6 +13,8 @@ ENV_DIR = str(SNAKEFILE_DIR / "envs")
 CONFIG_DIR = str(SNAKEFILE_DIR / "config")
 RULE_DIR = str(SNAKEFILE_DIR / "rules")
 
+ENVS = {Path(e).stem: e for e in Path(ENV_DIR).glob("*.yaml")}
+
 if exists("config.yaml"):
 
     configfile: "config.yaml"
@@ -65,11 +67,6 @@ pathvars:
     pair_dir="<work>/<pair_name>",
     pair_output="<pair_dir>/processed_output",
     pair_scratch="<scratch>/prediction_data/<pair_name>",
-
-
-def modules_for(rule_name):
-    mods = config.get("modules", {}).get(rule_name, [])
-    return "" if not mods else "module load " + " ".join(mods)
 
 
 rule all:

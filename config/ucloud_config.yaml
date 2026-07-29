@@ -18,10 +18,3 @@ alphafast:
   jax_compilation_cache_dir: /tmp/alphafast_jax_cache_example
   backend: udocker
   gpu_devices: "0,1,2,3"
-
-modules:
-  apply_defattr:
-    - chimerax
-
-  run_alphafast:
-    - udocker

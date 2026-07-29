@@ -52,7 +52,7 @@ rule get_and_plot_metrics:
     group:
         "stats"
     conda:
-        f"{ENV_DIR}/base.yaml"
+        ENVS["base"]
     params:
         ipsae_dir=lambda wc: f"{SCRATCH}/{wc.bait}__{wc.prey}/ipSAE",
         out_dir=lambda wc, output: str(Path(output.metrics_table).parent),
@@ -98,7 +98,7 @@ rule project_screen:
     group:
         "stats"
     conda:
-        f"{ENV_DIR}/base.yaml"
+        ENVS["base"]
     params:
         output_dir=lambda wc, output: str(Path(output.out_table).parent),
         prey=lambda wc: wc.prey,
@@ -127,7 +127,7 @@ rule summarize_all:
     log:
         "<logs>/summarize_screens.log",
     conda:
-        f"{ENV_DIR}/base.yaml"
+        ENVS["base"]
     run:
         with rule_logger(logfile=log[0], rule_name=rule) as logger:
             logger.info(f"Found {len(input.tables)} tables to concatenate.")

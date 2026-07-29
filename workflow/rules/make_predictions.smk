@@ -45,13 +45,14 @@ rule run_alphafast_batch:
     log:
         "<logs>/run_alphafast_batch/batch_{batch}.log",
     priority: 50
+    conda:
+        ENVS["udocker"]
     resources:
         af_batch_slots=1,
     params:
-        modules=modules_for("run_alphafast"),
         af_scriptdir=config["alphafast"]["script_dir"],
         af_container=config["alphafast"]["container"],
-        af_backend=config["alphafast"].get("backend", "singularity"),
+        af_backend=config["alphafast"].get("backend", "udocker"),
         af_db_dir=config["alphafast"]["db_dir"],
         af_weights_dir=config["alphafast"]["weights_dir"],
         af_temp_dir=config["alphafast"]["temp_dir"],
@@ -63,11 +64,6 @@ rule run_alphafast_batch:
         set -euo pipefail
 
         mkdir -p {output.predictions:q}
-
-        export SINGULARITYENV_XLA_FLAGS="--xla_disable_hlo_passes=custom-kernel-fusion-rewriter"
-        export APPTAINERENV_XLA_FLAGS="--xla_disable_hlo_passes=custom-kernel-fusion-rewriter"
-
-        {params.modules}
 
         {params.af_scriptdir}/run_alphafast.sh \
             --input_dir {input.json_temp:q} \
@@ -93,7 +89,7 @@ rule archive_predictions:
         archive=update("<database>/{prediction}.tar.zst"),
     log:
         "<logs>/archive_predictions/{prediction}.log",
-    priority: 20
+    priority: 100
     shell:
         r"""
         exec > >(tee {log:q}) 2>&1
