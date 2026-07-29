@@ -157,9 +157,25 @@ if STRUCTURE_BAITS:
                 Path(output.accessions).write_text("\n".join(uni_ids) + "\n")
 
 
+rule fetch_uniprot:
+    output:
+        database=UNIPROT_LOCAL,
+    log:
+        "<logs>/fetch_uniprot.log",
+    shell:
+        r"""
+        exec > >(tee {log:q}) 2>&1
+        set -euo pipefail
+
+        wget -qO- \
+            https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz \
+            | gunzip -c >{output.database:q}
+        """
+
+
 rule make_uniprot_index:
     input:
-        database=UNIPROT_LOCAL,
+        database=ancient(UNIPROT_LOCAL),
     output:
         index=str(Path(UNIPROT_LOCAL).parent / f"{Path(UNIPROT_LOCAL).stem}.idx"),
     log:
@@ -174,6 +190,7 @@ rule make_master_fasta:
         bait_lists=expand(
             f"{PAIR_DIR}/baits_accessions.txt", prey=PREYS, bait=BAITS_NAMED
         ),
+        prey_list=config["proteins_screened"],
         uniprot_db=ancient(UNIPROT_LOCAL),
         uniprot_idx=ancient(rules.make_uniprot_index.output.index),
     output:
@@ -200,6 +217,11 @@ rule make_master_fasta:
 rule make_prey_fasta_per_pair:
     input:
         fasta_index=ancient(rules.make_master_fasta.output.fasta_index),
+        prey_fasta=branch(
+            lambda wc: exists(f"{WORK_DIR}/{wc.bait}__{wc.prey}/prey.fasta"),
+            ancient(config["proteins_screened"]),
+            config["proteins_screened"],
+        ),
     output:
         prey_fasta="<pair_dir>/prey.fasta",
     log:
