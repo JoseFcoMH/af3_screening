@@ -11,7 +11,6 @@ Uses a modified [ipSAE](###ipSAE) calculation script to allow specifying an outp
 Less barren usage intructions [here](config/README.md).
 
 # Dependencies
-- Alphafast-ready mmseqs database. Setup instructions in the [Alphafast repo](https://github.com/RomeroLab/alphafast)
 - Conda
 - The workflow must be run from an env with:
   - Python >= 3.10
