@@ -4,6 +4,8 @@ A snakemake workflow to screen protein-protein interactions between a list of "p
 
 Uses a modified [ipSAE](###ipSAE) calculation script to allow specifying an output dir and [forked Alphafast](https://github.com/JoseFcoMH/alphafast) to run alphafast from an uDocker container.
 
+Less barren usage intructions [here](config/README.md).
+
 # Dependencies
 - Alphafast-ready mmseqs database. Setup instructions in the [Alphafast repo](https://github.com/RomeroLab/alphafast)
 - Conda
