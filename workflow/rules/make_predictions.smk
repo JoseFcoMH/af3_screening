@@ -94,7 +94,7 @@ rule run_alphafast_batch:
         backend=config.get("af_backend", "udocker"),
         temp_dir=str(Path(SCRATCH) / "alphafast"),
         jax_dir=str(Path(SCRATCH) / "jax"),
-        mmseqs_db=lambda wc, input: str(Path(input.mmseqs_ready).parent.parent),
+        mmseqs_db=lambda wc, input: str(Path(input.mmseqs_ready).parent),
         gpu_devices=lambda wc, resources: ",".join(
             str(x) for x in range(int(resources.n_gpu))
         ),
