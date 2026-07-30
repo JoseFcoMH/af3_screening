@@ -30,7 +30,7 @@ af_weights_dir: /work/datadir/
 
   - **reference_structures**: path to a file containing, on each line, one path to a structure in .cif format. Sequences will be extracted from the file, and each prey will be projected to it too.
 
-  - **proteins_screened**: path to a file containing a list of uniprot accessions. Predicitons will be the product of this list and the concatenated reference_proteins.
+  - **proteins_screened**: path to a file containing a list of uniprot accessions. Predictions will be the product of this list and the concatenated reference_proteins.
   
   - **total_max_res**: AF inputs whose chains surpass this threshold won't be considered for prediction (optional, default 4000).
 
