@@ -35,7 +35,7 @@ rule make_json_batch:
                 path.write_text(json.dumps(dimer, indent=4))
 
 
-rule setup_mmseqs:
+rule setup_alphafast:
     output:
         af_run_script=str(
             Path(config.get("af_repo_dir", "<scratch>/alphafast/repo"))
@@ -43,16 +43,16 @@ rule setup_mmseqs:
         ),
         mmseqs_sentinel=str(
             Path(config.get("af_mmseqs_db", "<scratch>/alphafast/mmseqs"))
-            / "mmseqs/uniprot_padded.dbtype"
+            / "mmseqs.ready"
         ),
     log:
         "<logs>/setup_alphafast.log",
     conda:
         ENVS["udocker"]
     params:
-        repo_parent=lambda wc, output: str(Path(output.af_repo_dir).parent),
         af_repo=config.get("af_repo", "https://github.com/JoseFcoMH/alphafast.git"),
-        mmseqs_dir=lambda wc, output: str(Path(output.mmseqs_db).parent.parent),
+        repo_parent=lambda wc, output: str(Path(output.af_run_script).parent.parent),
+        mmseqs_dir=lambda wc, output: str(Path(output.mmseqs_sentinel).parent),
     shell:
         r"""
         exec > >(tee {log:q}) 2>&1
@@ -61,17 +61,17 @@ rule setup_mmseqs:
         echo "=== Copying repo ==="
         cd {params.repo_parent:q}
         git clone {params.af_repo:q}
-        cd {output.af_repo_dir:q}
 
         echo "=== Setting up mmseqs database ==="
-        ./scripts/setup_databases.sh {output.mmseqs_dir:q} --protein-only
+        ./scripts/setup_databases.sh {params.mmseqs_dir:q} --protein-only
+        touch {output.mmseqs_sentinel:q}
         """
 
 
 rule run_alphafast_batch:
     input:
-        af_repo_dir=ancient(rules.setup_mmseqs.output.af_run_script),
-        mmseqs_db=ancient(rules.setup_mmseqs.output.mmseqs_sentinel),
+        af_run_script=ancient(rules.setup_alphafast.output.af_run_script),
+        mmseqs_ready=ancient(rules.setup_alphafast.output.mmseqs_sentinel),
         json_temp=rules.make_json_batch.output.json_temp,
     output:
         predictions=temp(
@@ -84,13 +84,17 @@ rule run_alphafast_batch:
         ENVS["udocker"]
     resources:
         af_batch_slots=1,
+        n_gpu=1,
     params:
         weights_dir=config["af_weights_dir"],
         container=config.get("af_container", "romerolabduke/alphafast:latest"),
         backend=config.get("af_backend", "udocker"),
         temp_dir=str(Path(SCRATCH) / "alphafast"),
         jax_dir=str(Path(SCRATCH) / "jax"),
-        gpu_devices=config.get("gpu_devices", "0"),
+        mmseqs_db=lambda wc, input: str(Path(input.mmseqs_ready).parent.parent),
+        gpu_devices=lambda wc, resources: ",".join(
+            str(x) for x in range(resources.n_gpu)
+        ),
     shell:
         r"""
         exec > >(tee {log:q}) 2>&1
@@ -98,12 +102,12 @@ rule run_alphafast_batch:
 
         mkdir -p {output.predictions:q}
 
-        {input.af_run_script} \
+        {input.af_run_script:q} \
             --input_dir {input.json_temp:q} \
             --output_dir {output.predictions:q} \
             --container {params.container:q} \
             --backend {params.backend} \
-            --db_dir {input.mmseqs_db:q} \
+            --db_dir {params.mmseqs_db:q} \
             --weights_dir {params.weights_dir:q} \
             --temp_dir {params.temp_dir:q} \
             --jax_compilation_cache_dir {params.jax_dir:q} \
