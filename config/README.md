@@ -1,7 +1,10 @@
 # Usage
 
 It's probably best to specify at least the mmseqs database path and placing it in persistent storage, since it takes a long time to set up.
+
 A persistent predictions database will avoid running the same prediction across different workflow invocations, provided they share the same database directory.
+
+At least one of *reference_structures* or *reference_proteins* must be provided.
 
 ### Params
 
