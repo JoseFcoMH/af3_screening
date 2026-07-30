@@ -58,12 +58,13 @@ rule map_prediction_to_structure:
         prediction_dirs=lambda wc, input: [
             str(Path(model).parent) for model in input.models
         ],
+        script_dir=SCRIPT_DIR,
     shell:
         r"""
         exec > >(tee {log:q}) 2>&1
         set -euo pipefail
 
-        python {SCRIPT_DIR}/project_to_structure.py \
+        python {params.script_dir}/project_to_structure.py \
             --af3_list {params.prediction_dirs:q} \
             --out_file {output.attr_file:q} \
             --cif_file {input.cif_structure:q} \

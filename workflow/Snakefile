@@ -105,6 +105,7 @@ rule all:
         "<work>/summary_metrics.tsv",
 
 
+include: f"{RULE_DIR}/common.smk"
 include: f"{RULE_DIR}/preprocess.smk"
 include: f"{RULE_DIR}/make_predictions.smk"
 include: f"{RULE_DIR}/output_metrics.smk"

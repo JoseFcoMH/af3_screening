@@ -58,6 +58,7 @@ rule get_and_plot_metrics:
         out_dir=lambda wc, output: str(Path(output.metrics_table).parent),
         pair=lambda wc: f"{wc.bait}__{wc.prey}",
         n_files=lambda wc, input: len(input.models),
+        script_dir=SCRIPT_DIR,
     shell:
         r"""
         exec > >(tee {log:q}) 2>&1
@@ -78,9 +79,9 @@ rule get_and_plot_metrics:
 
                 # echo "Calculating metrics for $pair_name"
                 python "$ipsae_script" "$jpair" "$model" 10 10 {params.ipsae_dir:q} || echo "WARNING: ipSAE calculation failed for $pair_name"
-            ' _ "{SCRIPT_DIR}/ipsae.py"
+            ' _ "{params.script_dir}/ipsae.py"
 
-        python {SCRIPT_DIR}/ipsae_viz_af3.py \
+        python {params.script_dir}/ipsae_viz_af3.py \
             --ipsae_dir {params.ipsae_dir:q} \
             --out_dir {params.out_dir:q}
 
@@ -102,12 +103,13 @@ rule project_screen:
     params:
         output_dir=lambda wc, output: str(Path(output.out_table).parent),
         prey=lambda wc: wc.prey,
+        script_dir=SCRIPT_DIR,
     shell:
         r"""
         exec > >(tee {log:q}) 2>&1
         set -euo pipefail
 
-        python {SCRIPT_DIR}/project_screen.py \
+        python {params.script_dir}/project_screen.py \
             --predictions_list {input.confs} \
             --output_dir {params.output_dir} \
             --prey {params.prey} \
@@ -126,8 +128,6 @@ rule summarize_all:
         summary_table="<work>/summary_metrics.tsv",
     log:
         "<logs>/summarize_screens.log",
-    conda:
-        ENVS["base"]
     run:
         with rule_logger(logfile=log[0], rule_name=rule) as logger:
             logger.info(f"Found {len(input.tables)} tables to concatenate.")
