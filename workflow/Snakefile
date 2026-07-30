@@ -37,9 +37,10 @@ SCRATCH = str(config.get("scratch_dir", Path(WORK_DIR) / "tmp"))
 DATABASE = str(
     config.get("predictions_database", Path(SCRATCH) / "predictions_database")
 )
-UNIPROT_LOCAL = str(config.get("uniprot_path", Path(SCRATCH) / "uniprot"))
+UNIPROT_LOCAL = str(config.get("uniprot_path", Path(SCRATCH) / "uniprot/uniprot.fa"))
 
-for d in (WORK_DIR, SCRATCH, DATABASE, UNIPROT_LOCAL):
+Path(UNIPROT_LOCAL).parent.mkdir(exist_ok=True, parents=True)
+for d in (WORK_DIR, SCRATCH, DATABASE):
     Path(d).mkdir(exist_ok=True, parents=True)
 
 PREDICTION_BATCH_SIZE = int(config.get("prediction_batch_size", 4000))

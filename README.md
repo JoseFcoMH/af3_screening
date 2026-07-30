@@ -26,5 +26,3 @@ Less barren usage intructions [here](config/README.md).
   - Improve docs 
     - Add example outputs.
     - Better describe usage.
-
-```

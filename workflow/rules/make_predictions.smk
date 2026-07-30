@@ -51,7 +51,7 @@ rule setup_alphafast:
         ENVS["udocker"]
     params:
         af_repo=config.get("af_repo", "https://github.com/JoseFcoMH/alphafast.git"),
-        repo_parent=lambda wc, output: str(Path(output.af_run_script).parent.parent),
+        repo_parent=lambda wc, output: str(Path(output.af_run_script).parents[2]),
         mmseqs_dir=lambda wc, output: str(Path(output.mmseqs_sentinel).parent),
     shell:
         r"""
@@ -59,11 +59,14 @@ rule setup_alphafast:
         set -euo pipefail
 
         echo "=== Copying repo ==="
-        cd {params.repo_parent:q}
-        git clone {params.af_repo:q}
+        REPO_DIR={params.repo_parent:q}/alphafast
+        rm -rf "$REPO_DIR"
+        mkdir "$REPO_DIR"
+        git clone {params.af_repo:q} "$REPO_DIR"
 
         echo "=== Setting up mmseqs database ==="
-        ./scripts/setup_databases.sh {params.mmseqs_dir:q} --protein-only
+        cd "$REPO_DIR"
+        "$REPO_DIR"/scripts/setup_databases.sh {params.mmseqs_dir:q} --protein-only
         touch {output.mmseqs_sentinel:q}
         """
 
