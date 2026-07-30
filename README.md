@@ -11,12 +11,9 @@ Uses a modified [ipSAE](###ipSAE) calculation script to allow specifying an outp
 Less barren usage intructions [here](config/README.md).
 
 # Dependencies
-- Conda
-- The workflow must be run from an env with:
-  - Python >= 3.10
-  - Snakemake >= 9
-  - Biopython
-  - Polars
+    - Conda
+    - Python >= 3.10
+    - Snakemake >= 9
 
 # References
 ### This repo: [Publication](https://www.cell.com/molecular-cell/fulltext/S1097-2765(26)00288-1)

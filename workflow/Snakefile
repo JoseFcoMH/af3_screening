@@ -15,6 +15,10 @@ RULE_DIR = str(SNAKEFILE_DIR / "rules")
 
 ENVS = {Path(e).stem: e for e in Path(ENV_DIR).glob("*.yaml")}
 
+
+conda: ENVS["global"]
+
+
 if exists("config.yaml"):
 
     configfile: "config.yaml"
