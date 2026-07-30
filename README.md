@@ -11,12 +11,20 @@ Uses a modified [ipSAE](###ipSAE) calculation script to allow specifying an outp
 Less barren usage intructions [here](config/README.md).
 
 # Dependencies
-    - Conda
-    - Python >= 3.10
-    - Snakemake >= 9
+  - Conda
+  - Python >= 3.10
+  - Snakemake >= 9
 
 # References
 ### This repo: [Publication](https://www.cell.com/molecular-cell/fulltext/S1097-2765(26)00288-1)
 ### Alphafast: [Repo](https://github.com/RomeroLab/alphafast)   [Paper](https://www.biorxiv.org/content/10.64898/2026.02.17.706409v1)
 ### ipSAE: [Repo](https://github.com/DunbrackLab/IPSAE)   [Paper](https://www.biorxiv.org/content/10.1101/2025.02.10.637595v1)
 ### [ChimeraX](https://www.cgl.ucsf.edu/chimerax/)
+
+# TODO
+
+  - Improve docs 
+    - Add example outputs.
+    - Better describe usage.
+
+```
