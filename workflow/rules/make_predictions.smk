@@ -93,7 +93,7 @@ rule run_alphafast_batch:
         jax_dir=str(Path(SCRATCH) / "jax"),
         mmseqs_db=lambda wc, input: str(Path(input.mmseqs_ready).parent.parent),
         gpu_devices=lambda wc, resources: ",".join(
-            str(x) for x in range(resources.n_gpu)
+            str(x) for x in range(int(resources.n_gpu))
         ),
     shell:
         r"""

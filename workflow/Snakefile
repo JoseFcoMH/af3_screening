@@ -28,10 +28,19 @@ if prots := config.get("reference_proteins"):
 if structs := config.get("reference_structures"):
     STRUCTURE_BAITS = Path(structs).read_text().strip().splitlines()
 
-UNIPROT_LOCAL = config.get("uniprot_path", None)
+WORK_DIR = str(config["out_dir"])
+SCRATCH = str(config.get("scratch_dir", Path(WORK_DIR) / "tmp"))
+DATABASE = str(
+    config.get("predictions_database", Path(SCRATCH) / "predictions_database")
+)
+UNIPROT_LOCAL = str(config.get("uniprot_path", Path(SCRATCH) / "uniprot"))
+
+for d in (WORK_DIR, SCRATCH, DATABASE, UNIPROT_LOCAL):
+    Path(d).mkdir(exist_ok=True, parents=True)
+
 PREDICTION_BATCH_SIZE = int(config.get("prediction_batch_size", 4000))
 
-DB_PATHS = list(Path(config["predictions_database"]).glob("*.tar.zst"))
+DB_PATHS = list(Path(DATABASE).glob("*.tar.zst"))
 DB_PREDS = [p.stem.split(".")[0] for p in DB_PATHS]
 
 BAITS = sorted(set(STRUCTURE_BAITS + PROTEINLIST_BAITS))
@@ -50,12 +59,9 @@ logger.info(
 )
 
 
-SCRATCH = config.get("scratch_dir", config["work_dir"] + "/scratch")
-DATABASE = config["predictions_database"]
 PAIR_NAME = "{bait}__{prey}"
 PAIR_DIR = f"<work>/{PAIR_NAME}"
 PAIR_OUTPUT = f"{PAIR_DIR}/processed_output"
-WORK_DIR = config.get("work_dir")
 
 
 pathvars:

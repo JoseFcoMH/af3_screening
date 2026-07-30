@@ -1,5 +1,35 @@
 jobs: 500
 use-conda: true
 resources:
-  af_batch_slots: 1
-  api_request: 1
+  - af_batch_slots=1
+  - api_request=1
+  - n_gpu=1
+  - api_requests=1
+  - af_batch_slots=1
+
+default-resources:
+  - runtime=2h
+  - cpus_per_task=1
+  - mem_mb=4096
+
+set-resources:
+  run_alphafast_batch:
+    runtime: "240h"
+    mem_mb: 64000
+    cpus_per_task: 8
+    n_gpu: 1
+    af_batch_slots: 1
+  map_prediction_to_structure:
+    mem_mb: 8000
+    cpus_per_task: 4
+  get_and_plot_metrics:
+    mem_mb: 4000
+    cpus_per_task: 4
+  project_screen:
+    cpus_per_task: 4
+
+set-threads:
+  run_alphafast_batch: 8 
+  map_prediction_to_structure: 4
+  get_and_plot_metrics: 8
+  project_screen: 4

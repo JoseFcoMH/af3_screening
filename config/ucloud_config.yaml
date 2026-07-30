@@ -5,7 +5,7 @@ proteins_screened: /work/datadir/af3_runs/example/pipeline_inputs/preys.txt
 total_max_res: 4000
 prediction_batch_size: 4000
 
-work_dir: /work/datadir/af3_runs/example/pipeline_outputs
+out_dir: /work/datadir/af3_runs/example/pipeline_outputs
 scratch_dir : /tmp/af3_pipeline/example
 predictions_database: /work/datadir/af3_runs/predictions_database
 uniprot_path: /work/datadir/uniprot_db/uniprot_sprot.fasta
@@ -13,4 +13,3 @@ uniprot_path: /work/datadir/uniprot_db/uniprot_sprot.fasta
 af_repo_dir: /work/repos/alphafast
 af_mmseqs_db: /work/datadir/mmseqs2_dbs
 af_weights_dir: /work/datadir/
-gpu_devices: "0,1,2,3"
