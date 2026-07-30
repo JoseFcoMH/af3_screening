@@ -1,4 +1,7 @@
 usage:
+  mandatory-flags:
+    desc: "--reference_structures is optional if --reference_proteins is provided, and vice versa."
+    flags: ["--reference_proteins", "--reference_structures", "proteins_screened" ,"--out_dir", "--af_weights_dir"]
   software-stack-deployment:
     conda: true
   report: false
