@@ -22,6 +22,7 @@ out_dir: .test
 scratch_dir : /tmp/af3_pipeline/test
 predictions_database: /tmp/af3_pipeline/test/test_db
 uniprot_path: /tmp/af3_pipeline/test/uniprot_db/uniprot_sprot.fasta
+udocker_dir: ~/.udocker
 
 af_repo_dir: /work/repos/alphafast
 af_mmseqs_db: /work/datadir/mmseqs2_dbs
@@ -46,6 +47,8 @@ af_weights_dir: /work/datadir/
   - **predictions_database**: path to a directory containing compressed AF outputs (optional).
 
   - **uniprot_path**: path where uniprot-swissprot will be saved to (optional).
+
+  - **udocker_dir**: path to persistent udocker dir (optional, default env var UDOCKER_DIR or ~/.udocker if not set)
 
   - **af_repo_dir**: alphafast repo dir (optional).
 
