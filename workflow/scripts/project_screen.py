@@ -135,12 +135,13 @@ def main():
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--predictions_list", nargs="+", type=Path)
+    parser.add_argument("--predictions_list", type=Path)
     parser.add_argument("--output_dir", type=Path)
     parser.add_argument("--prey", type=str)
     parser.add_argument("--n_cores", type=int, default=1)
 
     args = parser.parse_args()
+
     output_dir = args.output_dir
     prey = args.prey
 
@@ -148,8 +149,10 @@ def main():
     out_html = output_dir / "projected_icp.html"
     out_png = output_dir / "projected_icp.png"
 
-    # predictions = find_predictions(prediction_dir)
-    predictions = [Path(p).parent for p in args.predictions_list]
+    predictions = [
+        Path(p).parent
+        for p in Path(args.predictions_list).read_text().strip().splitlines()
+    ]
 
     logger.info("Started processing predictions.")
     with ProcessPoolExecutor(args.n_cores) as executor:

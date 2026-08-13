@@ -103,6 +103,7 @@ rule project_screen:
         ENVS["base"]
     params:
         output_dir=lambda wc, output: str(Path(output.out_table).parent),
+        temp_manifest=lambda wc: f"{SCRATCH}/.rundata/{wc.bait}__{wc.prey}/projection_manifest.txt",
         prey=lambda wc: wc.prey,
         script_dir=SCRIPT_DIR,
     shell:
@@ -110,11 +111,15 @@ rule project_screen:
         exec > >(tee {log:q}) 2>&1
         set -euo pipefail
 
-        python {params.script_dir}/project_screen.py \
-            --predictions_list {input.confs} \
-            --output_dir {params.output_dir} \
+        printf '%s\n' {input.confs:q} >{params.temp_manifest:q}
+
+        python {params.script_dir:q}/project_screen.py \
+            --predictions_list {params.temp_manifest:q} \
+            --output_dir {params.output_dir:q} \
             --prey {params.prey} \
             --n_cores {threads}
+
+        rm -f {params.temp_manifest:q}
         """
 
 
