@@ -9,14 +9,14 @@ rule make_json_batch:
         manifests=lambda wc: manifests_for_batches(),
         fasta=ancient(rules.make_master_fasta.output.fasta),
     output:
-        json_temp=temp(
-            directory("<scratch>/missing_jsons/batch_{batch}"), group_jobs=True
-        ),
+        json_temp=temp("<scratch>/missing_jsons_batch_{batch}.txt", group_jobs=True),
     log:
         "<logs>/make_missing_jsons/batch_{batch}.log",
+    params:
+        json_dir=lambda wc: f"{SCRATCH}/missing_jsons/batch_{wc.batch}",
     run:
         with rule_logger(logfile=log[0], rule_name=rule) as logger:
-            json_batch_dir = Path(output.json_temp)
+            json_batch_dir = Path(params.json_dir)
             json_batch_dir.mkdir(exist_ok=True, parents=True)
             prots = fasta_to_dict(input.fasta)
             manifest = batch_manifests(input.manifests)
@@ -25,6 +25,7 @@ rule make_json_batch:
                     pl.col("batch").cast(pl.Int64).eq(int(wildcards.batch))
                 )
             )["prediction"].to_list()
+            json_in_batch = []
             for req_pred in prediction_batch:
                 p1, p2 = req_pred.split("__")
                 dimer = dimer_template.copy()
@@ -33,6 +34,8 @@ rule make_json_batch:
                 dimer["sequences"][1]["protein"]["sequence"] = prots[p2]
                 path = json_batch_dir / f"{req_pred}.json"
                 path.write_text(json.dumps(dimer, indent=4))
+                json_in_batch.append(str(path.resolve()))
+            Path(output.json_temp).write_text("\n".join(json_in_batch))
 
 
 rule setup_alphafast:
@@ -71,17 +74,26 @@ rule setup_alphafast:
         """
 
 
+def json_for_attempt(wc):
+    if wc.attempt == "0":
+        return rules.make_json_batch.output.json_temp
+    return checkpoints.archive_predictions.get(
+        batch=wc.batch, attempt=str(int(wc.attempt) - 1)
+    ).output.missing
+
+
 rule run_alphafast_batch:
     input:
         af_run_script=ancient(rules.setup_alphafast.output.af_run_script),
         mmseqs_ready=ancient(rules.setup_alphafast.output.mmseqs_sentinel),
-        json_temp=rules.make_json_batch.output.json_temp,
+        json_temp=json_for_attempt,
     output:
         predictions=temp(
-            directory("<scratch>/predictions/batch_{batch}"), group_jobs=True
+            directory("<scratch>/predictions/batch_{batch}_attempt_{attempt}"),
+            group_jobs=True,
         ),
     log:
-        "<logs>/run_alphafast_batch/batch_{batch}.log",
+        "<logs>/run_alphafast_batch/batch_{batch}_attempt_{attempt}.log",
     priority: 50
     conda:
         ENVS["udocker"]
@@ -89,6 +101,9 @@ rule run_alphafast_batch:
         af_batch_slots=1,
         n_gpu=1,
     params:
+        json_dir=lambda wc: str(
+            Path(f"{SCRATCH}/missing_jsons/batch_{wc.batch}") / f"{wc.attempt}"
+        ),
         weights_dir=config["af_weights_dir"],
         container=config.get("af_container", "romerolabduke/alphafast:latest"),
         backend=config.get("af_backend", "udocker"),
@@ -101,12 +116,15 @@ rule run_alphafast_batch:
     shell:
         r"""
         exec > >(tee {log:q}) 2>&1
-        set -euo pipefail
 
         mkdir -p {output.predictions:q}
+        mkdir -p {params.json_dir:q}
+        while IFS= read -r path; do
+            cp "$path" {params.json_dir:q}/
+        done <{input.json_temp:q}
 
         {input.af_run_script:q} \
-            --input_dir {input.json_temp:q} \
+            --input_dir {params.json_dir:q} \
             --output_dir {output.predictions:q} \
             --container {params.container:q} \
             --backend {params.backend} \
@@ -114,38 +132,74 @@ rule run_alphafast_batch:
             --weights_dir {params.weights_dir:q} \
             --temp_dir {params.temp_dir:q} \
             --jax_compilation_cache_dir {params.jax_dir:q} \
-            --gpu_devices {params.gpu_devices}
+            --gpu_devices {params.gpu_devices} || true
         """
 
 
-rule archive_predictions:
+checkpoint archive_predictions:
     input:
-        batch_dir=branch(
-            lambda wc: wc.prediction in DB_PREDS,
-            [],
-            batch_per_prediction,
-        ),
+        batch_dir=rules.run_alphafast_batch.output.predictions,
+        json_temp=json_for_attempt,
     output:
-        archive=update("<database>/{prediction}.tar.zst"),
+        successful="<scratch>/.rundata/batch_{batch}_attempt_{attempt}_successful.txt",
+        missing="<scratch>/.rundata/batch_{batch}_attempt_{attempt}_missing.txt",
     log:
-        "<logs>/archive_predictions/{prediction}.log",
+        "<logs>/archive_predictions/batch_{batch}_attempt_{attempt}.log",
     priority: 100
+    params:
+        n_successful=lambda wc, input: str(
+            len(list(Path(input.batch_dir).glob("*/*.cif")))
+        ),
+        list_successful=lambda wc, input: [
+            str(x.parent.name) for x in Path(input.batch_dir).glob("*/*.cif")
+        ],
+        path_successful=lambda wc, input: [
+            str(x.parent.resolve()) for x in Path(input.batch_dir).glob("*/*.cif")
+        ],
+        n_requested=lambda wc, input: str(
+            len((Path(input.json_temp).read_text().strip().splitlines()))
+        ),
+        database=DATABASE,
     shell:
         r"""
         exec > >(tee {log:q}) 2>&1
         set -euo pipefail
 
-        echo "Archiving {input.batch_dir:q}/{wildcards.prediction} as {output.archive:q}"
+        echo "Archiving {params.n_successful} predictions in {input.batch_dir:q} to {params.database:q}, out of {params.n_requested} requested from batch {wildcards.batch}"
 
-        if [[ -e {output.archive:q} ]]; then
-            echo "Archiving requested for {output.archive:q}, skipping as archive already exists. This should not have happened"
-            exit 0
+        if (({params.n_successful} > 0)); then
+            printf '%s\0' {params.path_successful:q} \
+                | xargs -0 -r -n1 -P {threads} sh -c '
+                database="$1"
+                file="$2"
+
+                ZSTD_CLEVEL=19 ZSTD_NBTHREADS=1 \
+                tar --create --zstd \
+                    --file "$database/$(basename "$file").tar.zst" \
+                    --directory "$file" \
+                    .
+            ' sh {params.database:q}
         fi
 
-        zst_CLEVEL=19 \
-            zst_NBTHREADS={threads} \
-            tar --create --zstd \
-            --file {output.archive:q} \
-            --directory {input.batch_dir:q}/{wildcards.prediction} \
-            .
+        echo "Done archiving. Figuring out what to rerun."
+
+        printf '%s\n' {params.list_successful:q} >{output.successful:q}
+
+        awk '
+            NR==FNR {{ successful[$0]=1; next }}
+            {{
+                name=$0
+                sub(/^.*\//, "", name)
+                sub(/\.json$/, "", name)
+
+                if (!(name in successful))
+                    print
+            }}
+        ' {output.successful:q} {input.json_temp:q} \
+            >{output.missing:q}
+
+        echo "Failed predictions:"
+        cat {output.missing:q}
+
+        echo "Done."
         """

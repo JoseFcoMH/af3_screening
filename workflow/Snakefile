@@ -46,7 +46,7 @@ for d in (WORK_DIR, SCRATCH, DATABASE):
 PREDICTION_BATCH_SIZE = int(config.get("prediction_batch_size", 4000))
 
 DB_PATHS = list(Path(DATABASE).glob("*.tar.zst"))
-DB_PREDS = [p.stem.split(".")[0] for p in DB_PATHS]
+DB_PREDS = frozenset([p.stem.split(".")[0] for p in DB_PATHS])
 
 BAITS = sorted(set(STRUCTURE_BAITS + PROTEINLIST_BAITS))
 BAITS_DICT = {Path(b).stem: b for b in BAITS}
@@ -54,13 +54,14 @@ BAITS_NAMED = sorted(list(BAITS_DICT.keys()))
 
 PREYS = sorted(set(Path(config["proteins_screened"]).read_text().strip().splitlines()))
 
+MAX_AF_RETRIES = int(config.get("max_af_retries", 3))
 
 logger.info(f"Got PREYS: {PREYS}")
 logger.info(f"Got BAITS: {BAITS_NAMED}")
 logger.info(f"Baits from protein list: {PROTEINLIST_BAITS}")
 logger.info(f"Baits from structure: {STRUCTURE_BAITS}")
 logger.info(
-    f"Archived predictions in database (showing first 5, out of {len(DB_PATHS)}): {[str(p) for p in DB_PATHS[:5]]}"
+    f"Archived predictions in database (showing first 5, out of {len(DB_PATHS)}):\n\t{'\n\t'.join(str(p) for p in DB_PATHS[:5])}"
 )
 
 

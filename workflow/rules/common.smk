@@ -8,7 +8,7 @@ import polars as pl
 def batch_manifests(
     manifests: list[Path | str],
     batch_size: int = PREDICTION_BATCH_SIZE,
-    done: Path | str = DB_PREDS,
+    done: set[Path | str] = DB_PREDS,
 ) -> pl.DataFrame:
     requested_predictions = set()
     for m in manifests:
@@ -63,8 +63,42 @@ def read_pair_manifest(bait: str, prey: str) -> tuple[str]:
     manifest_path = checkpoints.make_project_manifest.get().output.project_manifest
     manifest = pl.scan_csv(manifest_path, separator="\t")
     pair_manifest = manifest.filter(pl.col("prey").eq(prey) & pl.col("bait").eq(bait))
-    pair_predictions = pair_manifest.collect()["prediction"].to_list()
+    pair_predictions = set(pair_manifest.collect()["prediction"].to_list())
+
+    if missing_predictions := pair_predictions - DB_PREDS:
+        manifest_mapping = make_batch_mapping()
+        for missing in missing_predictions:
+            batch_i = manifest_mapping[missing]
+            if missing not in batch_successful(batch=batch_i):
+                pair_predictions.remove(missing)
+
     return tuple(pair_predictions)
+
+
+def archive_batch(wc):
+    manifest_mapping = make_batch_mapping()
+    batch_i = manifest_mapping[wc.prediction]
+    return batch_successful(batch=str(batch_i))
+
+
+@cache
+def batch_successful(batch: str) -> tuple[str]:
+    successful = []
+
+    for attempt in range(MAX_AF_RETRIES + 1):
+        cp = checkpoints.archive_predictions.get(
+            batch=batch,
+            attempt=str(attempt),
+        )
+        successful_in_attempt = (
+            Path(cp.output.successful).read_text().strip().splitlines()
+        )
+        successful.extend(successful_in_attempt)
+        missing = Path(cp.output.missing).read_text().strip().splitlines()
+        if not missing or not successful_in_attempt:
+            break
+
+    return tuple(successful)
 
 
 def confidences_for_pair(wc) -> list[str]:

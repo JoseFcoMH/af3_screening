@@ -3,10 +3,10 @@ import polars as pl
 
 rule get_predictions:
     input:
-        pred=branch(
+        archived=branch(
             lambda wc: wc.prediction in DB_PREDS,
-            before_update("<database>/{prediction}.tar.zst"),
-            "<database>/{prediction}.tar.zst",
+            [],
+            archive_batch,
         ),
     output:
         confidences=temp(
@@ -26,13 +26,14 @@ rule get_predictions:
     priority: -50
     params:
         out_dir=lambda wc, output: str(Path(output.confidences).parent),
+        database=DATABASE,
     shell:
         r"""
         exec > >(tee {log:q}) 2>&1
         set -euo pipefail
 
         tar --extract --zstd \
-            --file {input.pred:q} \
+            --file {params.database:q}/{wildcards.prediction}.tar.zst \
             --directory {params.out_dir:q} \
             ./{wildcards.prediction}_confidences.json \
             ./{wildcards.prediction}_model.cif \

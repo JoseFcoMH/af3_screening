@@ -29,6 +29,8 @@ set-resources:
     mem_mb: 256000
     n_gpu: 8
     af_batch_slots: 1
+  archive_predictions:
+    mem_mb: 8000
   map_prediction_to_structure:
     mem_mb: 16000
   get_and_plot_metrics:
@@ -36,6 +38,7 @@ set-resources:
 
 set-threads:
   run_alphafast_batch: 32
-  map_prediction_to_structure: 32
+  archive_predictions: 32
+  map_prediction_to_structure: 64
   get_and_plot_metrics: 32
   project_screen: 8
