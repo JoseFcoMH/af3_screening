@@ -4,8 +4,8 @@ import argparse
 from pathlib import Path
 import json
 import numpy as np
-import altair as alt
 import polars as pl
+import altair as alt
 import logging
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
@@ -77,58 +77,305 @@ def load_prediction(prediction: Path, project_on: str) -> pl.DataFrame:
     return DimerPrediction(prediction, reference_chain=project_on).icp_table
 
 
-def make_chart(data: pl.DataFrame) -> alt.FacetChart:
+def make_chart(
+    data: pl.DataFrame,
+    top_n: int = 10,
+) -> alt.HConcatChart:
+
     data = data.with_columns(
         pl.when(pl.col("project_on") == "A")
         .then(pl.col("name_B"))
         .otherwise(pl.col("name_A"))
         .alias("projected"),
-        pl.col("icp")
-        .max()
-        .over("pair")
-        .rank(method="dense", descending=True)
-        .alias("pair_rank"),
-    ).filter(pl.col("pair_rank").lt(13))
+    )
 
-    line = (
+    min_residue_value = int(data["residue"].min())
+    max_residue_value = int(data["residue"].max())
+
+    # -------------------------
+    # Controls
+    # -------------------------
+
+    search = alt.param(
+        name="search",
+        value="",
+        bind=alt.binding(
+            input="search",
+            placeholder="Search interaction...",
+            name="Highlight: ",
+        ),
+    )
+
+    min_residue = alt.param(
+        name="min_residue",
+        value=min_residue_value,
+        bind=alt.binding_range(
+            min=min_residue_value,
+            max=max_residue_value,
+            step=1,
+            name="Min residue: ",
+        ),
+    )
+
+    max_residue = alt.param(
+        name="max_residue",
+        value=max_residue_value,
+        bind=alt.binding_range(
+            min=min_residue_value,
+            max=max_residue_value,
+            step=1,
+            name="Max residue: ",
+        ),
+    )
+
+    min_icp = alt.param(
+        name="min_icp",
+        value=0.6,
+        bind=alt.binding_range(
+            min=0,
+            max=1,
+            step=0.01,
+            name="Min iCP: ",
+        ),
+    )
+
+    residue_filter = "datum.residue >= min_residue && datum.residue <= max_residue"
+
+    search_match = (
+        "(search === '') || (indexof(lower(datum.projected), lower(search)) >= 0)"
+    )
+
+    # -------------------------
+    # Shared filtered plot data
+    # -------------------------
+
+    # First restrict to the requested residue window.
+    #
+    # Then compute each interaction's maximum iCP INSIDE that
+    # window and keep the interaction only if that maximum
+    # exceeds min_icp.
+    #
+    # This means we don't chop holes into the lines.
+    plot_base = (
         alt.Chart(data)
-        .mark_line()
+        .transform_filter(residue_filter)
+        .transform_joinaggregate(
+            max_icp="max(icp)",
+            groupby=["projected"],
+        )
+        .transform_filter("datum.max_icp >= min_icp")
         .encode(
-            x=alt.X("residue:Q", title="Residue #"),
+            x=alt.X(
+                "residue:Q",
+                title="Residue #",
+            ),
             y=alt.Y(
                 "icp:Q",
                 title="Contact probability",
                 scale=alt.Scale(domain=[0, 1]),
             ),
-            color=alt.Color("projected:N", title="Interactor"),
+            color=alt.Color(
+                "projected:N",
+                legend=None,
+            ),
         )
     )
 
+    # -------------------------
+    # Lines
+    # -------------------------
+
+    lines = plot_base.mark_line(strokeWidth=1.5).encode(
+        opacity=alt.condition(
+            search_match,
+            alt.value(1),
+            alt.value(0.04),
+        ),
+        strokeWidth=alt.condition(
+            (
+                "(search !== '') && "
+                "(indexof("
+                "lower(datum.projected), "
+                "lower(search)"
+                ") >= 0)"
+            ),
+            alt.value(4),
+            alt.value(1.5),
+        ),
+    )
+
+    # -------------------------
+    # High-iCP dots
+    # -------------------------
+
     points = (
-        alt.Chart(data)
-        .transform_filter("datum.icp > 0.6")
-        .mark_point(size=30)
+        plot_base.transform_filter("datum.icp >= min_icp")
+        .mark_point(
+            filled=True,
+            size=45,
+        )
         .encode(
-            x="residue:Q",
-            y="icp:Q",
-            color="projected:N",
+            opacity=alt.condition(
+                search_match,
+                alt.value(1),
+                alt.value(0.04),
+            ),
+            size=alt.condition(
+                (
+                    "(search !== '') && "
+                    "(indexof("
+                    "lower(datum.projected), "
+                    "lower(search)"
+                    ") >= 0)"
+                ),
+                alt.value(110),
+                alt.value(45),
+            ),
             tooltip=[
-                alt.Tooltip("projected:N", title="Interactor"),
-                alt.Tooltip("residue:Q", title="Residue"),
-                alt.Tooltip("icp:Q", title="Contact probability", format=".2f"),
+                alt.Tooltip(
+                    "projected:N",
+                    title="Interaction",
+                ),
+                alt.Tooltip(
+                    "residue:Q",
+                    title="Residue",
+                ),
+                alt.Tooltip(
+                    "icp:Q",
+                    title="Contact probability",
+                    format=".2f",
+                ),
             ],
         )
     )
 
-    chart = (
-        alt.layer(line, points)
+    plot = (
+        alt.layer(lines, points)
         .properties(
-            height=400,
-            width=600,
+            width=850,
+            height=500,
         )
         .interactive()
     )
-    return chart
+
+    # -------------------------
+    # Dynamic top-hits table
+    # -------------------------
+
+    # 1. Apply current residue filter.
+    # 2. Within each interaction, sort residues by iCP.
+    # 3. Keep its best residue.
+    # 4. Apply min-iCP threshold.
+    # 5. Rank interactions by that best iCP.
+    hits = (
+        alt.Chart(data)
+        .transform_filter(residue_filter)
+        .transform_window(
+            best_row="row_number()",
+            sort=[
+                alt.SortField(
+                    field="icp",
+                    order="descending",
+                )
+            ],
+            groupby=["projected"],
+        )
+        .transform_filter("datum.best_row == 1")
+        .transform_filter("datum.icp >= min_icp")
+        .transform_window(
+            hit_rank="row_number()",
+            sort=[
+                alt.SortField(
+                    field="icp",
+                    order="descending",
+                )
+            ],
+        )
+        .transform_filter(f"datum.hit_rank <= {top_n}")
+    )
+
+    table_y = alt.Y(
+        "hit_rank:O",
+        axis=None,
+        sort="ascending",
+    )
+
+    rank_column = (
+        hits.mark_text(align="right")
+        .encode(
+            y=table_y,
+            text=alt.Text(
+                "hit_rank:Q",
+                format=".0f",
+            ),
+        )
+        .properties(
+            width=30,
+            height=500,
+            title="#",
+        )
+    )
+
+    name_column = (
+        hits.mark_text(align="left")
+        .encode(
+            y=table_y,
+            text="projected:N",
+        )
+        .properties(
+            width=170,
+            height=500,
+            title="Interaction",
+        )
+    )
+
+    residue_column = (
+        hits.mark_text(align="right")
+        .encode(
+            y=table_y,
+            text=alt.Text(
+                "residue:Q",
+                format=".0f",
+            ),
+        )
+        .properties(
+            width=65,
+            height=500,
+            title="Residue",
+        )
+    )
+
+    icp_column = (
+        hits.mark_text(align="right")
+        .encode(
+            y=table_y,
+            text=alt.Text(
+                "icp:Q",
+                format=".3f",
+            ),
+        )
+        .properties(
+            width=60,
+            height=500,
+            title="iCP",
+        )
+    )
+
+    dashboard = alt.hconcat(
+        plot,
+        rank_column,
+        name_column,
+        residue_column,
+        icp_column,
+        spacing=8,
+    ).add_params(
+        search,
+        min_residue,
+        max_residue,
+        min_icp,
+    )
+
+    return dashboard
 
 
 def main():
@@ -147,7 +394,6 @@ def main():
 
     out_table = output_dir / "projected_icp.tsv"
     out_html = output_dir / "projected_icp.html"
-    out_png = output_dir / "projected_icp.png"
 
     predictions = [
         Path(p).parent
@@ -162,7 +408,7 @@ def main():
 
     logger.info(f"Done. Saved results as {out_table}. Started plotting.")
 
-    hit_genes = results_table.filter(pl.col("icp").gt(0.4)).unique(["name_A", "name_B"])
+    hit_genes = results_table.filter(pl.col("icp").gt(0.5)).unique(["name_A", "name_B"])
     filtered_data = results_table.join(hit_genes, on=["name_A", "name_B"], how="semi")
 
     if len(filtered_data) == 0:
@@ -170,8 +416,13 @@ def main():
     else:
         logger.info(f"Kept {len(filtered_data.unique('name_B'))} hits to plot.")
         chart = make_chart(filtered_data)
-        chart.save(out_html, inline=True, embed_options={"renderer": "canvas"})
-        chart.save(out_png, scale_factor=3.0)
+        chart.save(
+            out_html,
+            embed_options={
+                "renderer": "canvas",
+                "actions": True,
+            },
+        )
         logger.info("Saved plots.")
 
     logger.info("All done.")

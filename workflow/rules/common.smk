@@ -72,7 +72,7 @@ def read_pair_manifest(bait: str, prey: str) -> tuple[str]:
             if missing not in batch_successful(batch=batch_i):
                 pair_predictions.remove(missing)
 
-    return tuple(pair_predictions)
+    return tuple(sorted(pair_predictions))
 
 
 def archive_batch(wc):
