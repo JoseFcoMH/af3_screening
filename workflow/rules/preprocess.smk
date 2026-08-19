@@ -150,9 +150,8 @@ rule make_manifest:
     log:
         "<logs>/make_manifests/<pair_name>.log",
     params:
-        max_len=config.get("total_max_res", 2549),
-        database=DATABASE,
-        done_preds=DB_PREDS,
+        max_len=int(config.get("total_max_res", 2549)),
+        done_preds=sorted(DB_PREDS),
     run:
         with rule_logger(logfile=log[0], rule_name=rule) as logger:
             prey_name, prey_seq = next(
