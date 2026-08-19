@@ -128,14 +128,6 @@ def summaries_for_pair(wc) -> list[str]:
     )
 
 
-def predictions_for_pair(bait, prey) -> list[str]:
-    predictions = read_pair_manifest(bait=bait, prey=prey)
-    return expand(
-        "<database>/{prediction}.tar.zst",
-        prediction=predictions,
-    )
-
-
 def all_predictions(wc) -> list[str]:
     preds = set()
     for bait in BAITS_NAMED:

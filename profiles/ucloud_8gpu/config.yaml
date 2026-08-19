@@ -39,6 +39,9 @@ set-resources:
 set-threads:
   run_alphafast_batch: 32
   archive_predictions: 32
-  map_prediction_to_structure: 64
-  get_and_plot_metrics: 32
+  get_pair_models: 32
+  get_pair_summaries: 32
+  get_pair_confidences: 32
+  get_and_plot_metrics: 64
   project_screen: 8
+  map_prediction_to_structure: 64
