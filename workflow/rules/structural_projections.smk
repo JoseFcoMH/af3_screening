@@ -54,8 +54,8 @@ rule setup_chimerax:
 
 rule map_prediction_to_structure:
     input:
-        confs=confidences_for_pair,
-        models=models_for_pair,
+        confs=rules.get_pair_confidences.output.out_dir,
+        models=rules.get_pair_models.output.out_dir,
         cif_structure=lambda wc: BAITS_DICT[wc.bait],
     output:
         attr_file="<pair_output>/{bait}__{prey}.defattr",
@@ -64,8 +64,13 @@ rule map_prediction_to_structure:
     conda:
         ENVS["base"]
     params:
-        prediction_dirs=lambda wc, input: [
-            str(Path(model).parent) for model in input.models
+        predictions=lambda wc, input: [
+            Path(model).stem.split("_model.cif")[0] for model in input.models
+        ],
+        mock_dir=lambda wc, input: f"{SCRATCH}/.rundata/{wc.bait}__{wc.prey}/map_prediction_to_structure",
+        mock_pred_dirs=lambda wc, input: [
+            f"{SCRATCH}/.rundata/{wc.bait}__{wc.prey}/map_prediction_to_structure/{Path(model).stem.split('_model.cif')[0]}"
+            for model in input.models
         ],
         script_dir=SCRIPT_DIR,
     shell:
@@ -73,12 +78,19 @@ rule map_prediction_to_structure:
         exec > >(tee {log:q}) 2>&1
         set -euo pipefail
 
+        for pred in {params.predictions:q}; do
+            mkdir -p "{params.mock_dir}/$pred"
+            ln -s "{params.confs}/${{pred}}_model.cif" "{params.mock_dir}/${{pred}}/${{pred}}_model.cif"
+        done
+
         python {params.script_dir}/project_to_structure.py \
-            --af3_list {params.prediction_dirs:q} \
+            --af3_list {params.mock_pred_dirs:q} \
             --out_file {output.attr_file:q} \
             --cif_file {input.cif_structure:q} \
             --n_cpus {threads} \
             --reference_chain {wildcards.prey}
+
+        rm -rf {params.mock_dir:q}
         """
 
 
