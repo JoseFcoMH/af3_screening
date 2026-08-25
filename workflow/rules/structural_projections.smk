@@ -65,12 +65,13 @@ rule map_prediction_to_structure:
         ENVS["base"]
     params:
         predictions=lambda wc, input: [
-            Path(model).stem.split("_model.cif")[0] for model in input.models
+            model.stem.split("_model")[0]
+            for model in Path(input.models).glob("*_model.cif")
         ],
         mock_dir=lambda wc, input: f"{SCRATCH}/.rundata/{wc.bait}__{wc.prey}/map_prediction_to_structure",
         mock_pred_dirs=lambda wc, input: [
-            f"{SCRATCH}/.rundata/{wc.bait}__{wc.prey}/map_prediction_to_structure/{Path(model).stem.split('_model.cif')[0]}"
-            for model in input.models
+            f"{SCRATCH}/.rundata/{wc.bait}__{wc.prey}/map_prediction_to_structure/{model.stem.split('_model')[0]}"
+            for model in Path(input.models).glob("*_model.cif")
         ],
         script_dir=SCRIPT_DIR,
     shell:
@@ -80,7 +81,8 @@ rule map_prediction_to_structure:
 
         for pred in {params.predictions:q}; do
             mkdir -p "{params.mock_dir}/$pred"
-            ln -s "{params.confs}/${{pred}}_model.cif" "{params.mock_dir}/${{pred}}/${{pred}}_model.cif"
+            ln -s "{input.models}/${{pred}}_model.cif" "{params.mock_dir}/${{pred}}/${{pred}}_model.cif"
+            ln -s "{input.confs}/${{pred}}_confidences.json" "{params.mock_dir}/${{pred}}/${{pred}}_confidences.json"
         done
 
         python {params.script_dir}/project_to_structure.py \
@@ -98,7 +100,7 @@ rule apply_defattr:
     input:
         container=ancient(rules.setup_chimerax.output),
         cif=lambda wc: BAITS_DICT[wc.bait],
-        defattr="<pair_output>/{bait}__{prey}.defattr",
+        defattr=ancient("<pair_output>/{bait}__{prey}.defattr"),
     output:
         cxs="<pair_output>/{bait}__{prey}.cxs",
     log:
